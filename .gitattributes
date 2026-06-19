@@ -1,0 +1,17 @@
+# Prevent sensitive and build files from being included in git archive zips
+.env export-ignore
+backend/.env export-ignore
+backend/.env.template export-ignore
+frontend/node_modules/ export-ignore
+frontend/.next/ export-ignore
+frontend/out/ export-ignore
+backend/__pycache__/ export-ignore
+backend/app/__pycache__/ export-ignore
+backend/tests/__pycache__/ export-ignore
+.pytest_cache/ export-ignore
+backend/.pytest_cache/ export-ignore
+backend/uploads/ export-ignore
+backend/user-data/ export-ignore
+user-data/ export-ignore
+data/sqlite.db export-ignore
+backend/sqlite.db export-ignore

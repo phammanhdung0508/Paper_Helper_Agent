@@ -1,0 +1,12 @@
+.env
+node_modules/
+dist/
+build/
+.next/
+app.db
+*.sqlite
+documents/
+user-data/
+venv/
+__pycache__/
+.pytest_cache/

@@ -6,6 +6,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from app import config
 from app import database
+from app.llm_client import CodexCliClient, run_async
 
 # Define schemas for structured outputs
 class ConceptNode(BaseModel):
@@ -34,13 +35,31 @@ class PlotlySpec(BaseModel):
     function_type: str = Field(description="Type of function, e.g., 'normal_distribution', 'linear', 'exponential', 'cosine_similarity'.")
     parameters: Dict[str, Any] = Field(description="Parameters for the function.")
 
+class ThreePoint(BaseModel):
+    label: str = Field(description="Label of the concept point.")
+    x: float = Field(description="X coordinate in 3D space.")
+    y: float = Field(description="Y coordinate in 3D space.")
+    z: float = Field(description="Z coordinate in 3D space.")
+    color: str = Field(default="#8b78d9", description="Hex color or simple name.")
+    description: str = Field(default="", description="Description of point on hover.")
+
+class ThreeConnection(BaseModel):
+    source: str = Field(description="Source point label.")
+    target: str = Field(description="Target point label.")
+    color: str = Field(default="#475569", description="Hex color of line.")
+
+class ThreeSpec(BaseModel):
+    points: List[ThreePoint] = Field(description="List of 3D semantic vector points.")
+    connections: List[ThreeConnection] = Field(description="List of lines connecting points.")
+
 class VisualSpecOutput(BaseModel):
-    type: Literal["plotly", "katex", "canvas"]
+    type: Literal["plotly", "katex", "canvas", "three"]
     title: str
     description: str
     plotly_spec: Optional[PlotlySpec] = None
     katex_steps: Optional[List[KatexStep]] = None
     canvas_steps: Optional[List[Dict[str, Any]]] = None
+    three_spec: Optional[ThreeSpec] = None
 
 class MasteryAssessment(BaseModel):
     memory: int = Field(description="Updated memory score (0-100).", ge=0, le=100)
@@ -59,8 +78,7 @@ class ConceptGraphAgent:
             return ConceptGraphAgent._mock_graph(doc_id)
             
         try:
-            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=config.OPENAI_API_KEY)
-            structured_llm = llm.with_structured_output(KnowledgeGraph)
+            client = CodexCliClient()
             
             # Since document text can be long, we take a slice of the text
             # representing the first 15000 characters and last 10000 characters.
@@ -76,10 +94,12 @@ class ConceptGraphAgent:
                 "Ensure all node IDs match between nodes and edges, there are no self-loops, and all node IDs are unique."
             )
             
-            graph_data = structured_llm.invoke([
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=f"Document Text:\n{sample_text}")
-            ])
+            prompt = f"System Prompt:\n{system_prompt}\n\nDocument Text:\n{sample_text}"
+            graph_data = run_async(client.run_json(
+                task="extract_knowledge_graph",
+                prompt=prompt,
+                schema=KnowledgeGraph
+            ))
             
             nodes = []
             node_id_to_label = {}
@@ -148,8 +168,7 @@ class VisualSandboxAgent:
             return VisualSandboxAgent._mock_spec(doc_id, concept_id, concept_label)
             
         try:
-            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=config.OPENAI_API_KEY)
-            structured_llm = llm.with_structured_output(VisualSpecOutput)
+            client = CodexCliClient()
             
             prompt = (
                 f"You are a visual education designer. Generate a visualization specification for this concept:\n"
@@ -158,14 +177,16 @@ class VisualSandboxAgent:
                 "Decide which visualization type fits best:\n"
                 "1. 'plotly' if it has graphs, distributions, functions, or numeric plotting (e.g. Cosine Similarity curve, normal distribution, learning rate curve).\n"
                 "2. 'katex' if it involves equations, mathematical derivations, or steps (e.g. Mastery display formula, cosine formula, vector distance math).\n"
-                "3. 'canvas' if it is a multi-step sequence flow or mechanical animation (e.g. RAG pipeline flow: split -> embed -> index -> retrieve).\n\n"
+                "3. 'canvas' if it is a multi-step sequence flow or mechanical animation (e.g. RAG pipeline flow: split -> embed -> index -> retrieve).\n"
+                "4. 'three' if it represents a 3D semantic vector space or clusters of multi-dimensional items.\n\n"
                 "Provide rich rendering data in the corresponding field."
             )
             
-            spec = structured_llm.invoke([
-                SystemMessage(content="You generate structured visualization specifications for concepts."),
-                HumanMessage(content=prompt)
-            ])
+            spec = run_async(client.run_json(
+                task="generate_visual_spec",
+                prompt=f"System Prompt:\nYou generate structured visualization specifications for concepts.\n\nPrompt:\n{prompt}",
+                schema=VisualSpecOutput
+            ))
             
             spec_dict = {
                 "doc_id": doc_id,
@@ -182,6 +203,8 @@ class VisualSandboxAgent:
                 spec_dict["spec_json"] = {"steps": [step.dict() for step in spec.katex_steps]}
             elif spec.type == "canvas" and spec.canvas_steps:
                 spec_dict["spec_json"] = {"steps": spec.canvas_steps}
+            elif spec.type == "three" and spec.three_spec:
+                spec_dict["spec_json"] = spec.three_spec.dict()
                 
             return spec_dict
         except Exception as e:
@@ -191,19 +214,30 @@ class VisualSandboxAgent:
     @staticmethod
     def _mock_spec(doc_id: str, concept_id: str, label: str) -> Dict[str, Any]:
         lbl = label.lower()
-        if "rag" in lbl or "vector" in lbl or "chroma" in lbl:
-            # Let's show Cosine Similarity math for vector/rag
+        if "langgraph" in lbl or "rag" in lbl or "vector" in lbl or "chroma" in lbl:
             return {
                 "doc_id": doc_id,
                 "concept_id": concept_id,
-                "type": "katex",
-                "title": "Vector Cosine Similarity",
-                "description": "Cosine similarity measures the cosine of the angle between two multi-dimensional vectors, determining how semantically close two text chunks are.",
+                "type": "three",
+                "title": "3D Semantic Vector Space Visualization",
+                "description": "Visualizes the high-dimensional embedding space. Nodes represent concepts, and distance corresponds to semantic similarity. Drag to rotate the 3D space.",
                 "spec_json": {
-                    "steps": [
-                        {"formula": "\\cos(\\theta) = \\frac{\\mathbf{A} \\cdot \\mathbf{B}}{\\|\\mathbf{A}\\| \\|\\mathbf{B}\\|}", "explanation": "The general formula for cosine similarity. A and B are high-dimensional document embedding vectors."},
-                        {"formula": "\\mathbf{A} \\cdot \\mathbf{B} = \\sum_{i=1}^{n} A_i B_i", "explanation": "The dot product represents the alignment of individual dimensions of semantic features."},
-                        {"formula": "\\|\\mathbf{A}\\| = \\sqrt{\\sum_{i=1}^{n} A_i^2}", "explanation": "The vector norm represents the magnitude or length of the embedding vector."}
+                    "points": [
+                        {"label": "LangGraph", "x": 0.0, "y": 1.0, "z": 0.0, "color": "#4fae84", "description": "Core orchestration framework"},
+                        {"label": "State Management", "x": -1.5, "y": 0.5, "z": -1.0, "color": "#8b78d9", "description": "Saves state between agent nodes"},
+                        {"label": "Router Node", "x": 1.5, "y": 0.5, "z": 1.0, "color": "#8b78d9", "description": "Decides agent execution path"},
+                        {"label": "RAG Agent", "x": -2.0, "y": -1.0, "z": 2.0, "color": "#7e9bc8", "description": "Fetches context and answers"},
+                        {"label": "Vector Store", "x": -2.5, "y": -2.0, "z": 0.0, "color": "#7e9bc8", "description": "Semantic storage for chunks"},
+                        {"label": "Chroma DB", "x": -3.5, "y": -2.5, "z": -1.0, "color": "#7e9bc8", "description": "Local SQLite vector db"},
+                        {"label": "Langfuse", "x": 2.0, "y": -1.5, "z": -2.0, "color": "#ef4444", "description": "Observability and feedback tracing"}
+                    ],
+                    "connections": [
+                        {"source": "LangGraph", "target": "State Management", "color": "#475569"},
+                        {"source": "LangGraph", "target": "Router Node", "color": "#475569"},
+                        {"source": "Router Node", "target": "RAG Agent", "color": "#475569"},
+                        {"source": "RAG Agent", "target": "Vector Store", "color": "#475569"},
+                        {"source": "Vector Store", "target": "Chroma DB", "color": "#475569"},
+                        {"source": "LangGraph", "target": "Langfuse", "color": "#475569"}
                     ]
                 }
             }
@@ -304,8 +338,7 @@ class MasteryEvaluatorAgent:
             }
             
         try:
-            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=config.OPENAI_API_KEY)
-            structured_llm = llm.with_structured_output(MasteryAssessment)
+            client = CodexCliClient()
             
             prompt = (
                 f"Evaluate the student's mastery of the concept '{concept_label}'.\n"
@@ -319,10 +352,11 @@ class MasteryEvaluatorAgent:
                 "Keep in mind the scores are developmental. Provide your reasoning and recommendations."
             )
             
-            assessment = structured_llm.invoke([
-                SystemMessage(content="You are an expert learning assessor. Evaluate student responses strictly and fairly."),
-                HumanMessage(content=prompt)
-            ])
+            assessment = run_async(client.run_json(
+                task="evaluate_mastery_response",
+                prompt=f"System Prompt:\nYou are an expert learning assessor. Evaluate student responses strictly and fairly.\n\nPrompt:\n{prompt}",
+                schema=MasteryAssessment
+            ))
             
             new_scores = {
                 "memory": assessment.memory,

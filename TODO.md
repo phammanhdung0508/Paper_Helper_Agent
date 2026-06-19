@@ -2,28 +2,32 @@
 
 ## Project Direction
 
-Build a local-first desktop study companion that transforms text-based PDFs into interactive learning experiences. The MVP focuses on PDF ingestion, concept spotting, visual sandboxes, scoped PDF chat, a simple knowledge graph, and a lightweight mastery map.
+Build a local-first study companion that transforms text-based PDFs into interactive learning experiences. The target product stack is **Next.js + FastAPI**, with animation/visualization powered by **Three.js or similar web-native renderers**. The MVP focuses on PDF ingestion, concept spotting, visual sandboxes, scoped PDF chat, a simple knowledge graph, and a lightweight mastery map.
 
-The project should run locally on the user's computer and use the user's own OpenAI Codex CLI account where possible. The app should not require a paid hosted backend or proxy user documents through a developer-owned server.
+The project should run locally on the user's computer and use the user's own OpenAI Codex CLI account where possible. The app should not require a paid hosted backend or proxy user documents through a developer-owned server. Gradio is not the target UI for the product.
 
 ## Recommended Tools And Technologies
 
-### App Shell
+### Target Architecture
 
-Preferred MVP choices:
+Primary target stack:
 
-- Electron: best fit for a local desktop app with Node.js filesystem access and subprocess control.
-- Next.js inside Electron: good if building a rich React UI and local app experience.
+- Next.js frontend for the PDF viewer, concept tags, visual sandbox, Knowledge Graph, Mastery Map, and chat UI.
+- FastAPI backend for PDF ingestion, local storage, retrieval, agent workflows, Codex CLI calls, and observability hooks.
+- SQLite database for local state.
+- Filesystem storage for uploaded PDFs, generated artifacts, and optional exports.
 
-Alternative choices:
+Desktop packaging later:
 
-- Tauri: lighter than Electron, but Rust integration can add complexity.
-- Gradio: fastest for Lab 3 prototype, but less ideal for the final desktop product.
+- Electron can wrap the Next.js + FastAPI app after the local web app is stable.
+- Tauri can be considered later if app size becomes important.
+- Do not start with desktop packaging unless required.
 
 Recommended direction:
 
-- Start with Next.js + Electron if the goal is the real desktop app.
-- Use Gradio only if a quick Lab 3-compatible prototype is needed.
+- Start with Next.js running locally and FastAPI running locally.
+- Treat Electron/Tauri as a packaging layer, not the first milestone.
+- Do not use Gradio for the product UI.
 
 ### Frontend UI
 
@@ -44,15 +48,53 @@ Main UI panels:
 - knowledge graph/mastery map panel
 - setup/auth wizard for Codex login
 
+### Backend API
+
+Recommended backend stack:
+
+- FastAPI
+- Python 3.11+
+- Pydantic for request/response schemas
+- Uvicorn for local development server
+- SQLite for local persistence
+- Chroma, FAISS, or LanceDB for retrieval/vector search
+- subprocess management for Codex CLI calls
+
+Backend responsibilities:
+
+- PDF upload and validation
+- text extraction by page
+- chunking and retrieval
+- concept spotting
+- visual spec generation
+- Knowledge Graph generation and sanitization
+- scoped chat/RAG
+- mastery evaluation
+- local job queue/state
+- Langfuse tracing, if enabled
+
+Suggested FastAPI packages:
+
+- `fastapi`
+- `uvicorn`
+- `pydantic`
+- `python-multipart`
+- `sqlalchemy` or direct `sqlite3`
+- `aiosqlite`, optional
+- `pypdf` or `pymupdf`
+
 ### Desktop And Local System Access
 
-- Electron main process for:
-  - local file access
-  - PDF storage
-  - SQLite database access
-  - spawning Codex CLI subprocesses
-  - background jobs
-- Electron preload script for safe IPC between frontend and backend.
+For MVP:
+
+- Run Next.js and FastAPI as local development servers.
+- Store data under a local app data directory.
+- Start Codex CLI subprocesses from the FastAPI backend.
+
+For packaged desktop later:
+
+- Electron main process can launch the FastAPI backend and Next.js frontend.
+- Electron can manage local file access and app lifecycle.
 - Avoid exposing raw Node.js APIs directly to the renderer.
 
 Suggested Electron packages:
@@ -65,13 +107,15 @@ Suggested Electron packages:
 
 Recommended tools:
 
-- `pdfjs-dist`: rendering PDF pages and extracting text in a web/JS stack.
-- `pdf-parse`: simpler text extraction in Node.js if layout is not needed.
-- `pypdf`, `PyMuPDF`, or `pdfplumber`: good alternatives if building a Python service/prototype.
+- `PyMuPDF`: recommended for FastAPI backend text extraction and future layout/bounding-box support.
+- `pypdf`: simpler fallback for page text extraction.
+- `pdfjs-dist`: recommended in the Next.js frontend for PDF rendering/text layer display.
+- `pdfplumber`: optional if table/layout extraction becomes important.
 
 MVP recommendation:
 
-- Use `pdf-parse` or `pdfjs-dist` for page-level text extraction.
+- Use `PyMuPDF` or `pypdf` in FastAPI for page-level text extraction.
+- Use `pdfjs-dist` in Next.js for rendering pages.
 - Do not implement exact word-coordinate overlay in the first version.
 
 Future tools for pixel-level overlays:
@@ -85,39 +129,38 @@ Future tools for pixel-level overlays:
 Recommended stack:
 
 - SQLite
-- `better-sqlite3`
-- `drizzle-orm`
-- Drizzle migrations
+- SQLAlchemy, SQLModel, or direct `sqlite3` from FastAPI
+- Alembic, optional if using SQLAlchemy migrations
 
 Why:
 
 - local-first
 - simple backup
 - works offline
-- easy to ship with Electron
+- easy to ship with a local FastAPI app
 - enough for documents, concepts, chat history, mastery scores, and jobs
 
 Optional alternatives:
 
-- Prisma + SQLite: good developer experience, heavier runtime.
-- SQL.js: browser-only SQLite, but less ideal for desktop persistence.
-- LowDB: okay for prototypes, but weaker for relational state.
+- `better-sqlite3` + Drizzle if the backend is moved to Node/Electron later.
+- Prisma + SQLite if using a TypeScript backend later.
+- LowDB for quick prototypes only, but weaker for relational state.
 
 ### Vector Search / RAG
 
-For Lab 3 compatibility, include a minimal retrieval layer.
+Include a minimal retrieval layer for scoped PDF chat.
 
 Options:
 
-- Chroma: common LangChain choice, easy for Python Lab 3 implementation.
+- Chroma: common LangChain/FastAPI-compatible choice.
 - FAISS: fast local vector search, common in Python.
 - LanceDB: good local embedded vector database.
 - SQLite vector extension: possible later, but adds setup complexity.
 
 Recommended MVP options:
 
-- If Python/LangGraph prototype: Chroma or FAISS.
-- If TypeScript/Electron app: LanceDB or local JSON/SQLite retrieval first, then add embeddings.
+- Use Chroma or FAISS first in FastAPI.
+- Use simple SQLite keyword/BM25 fallback if embeddings are unavailable.
 
 Embedding options:
 
@@ -129,14 +172,15 @@ Embedding options:
 Primary direction:
 
 - OpenAI Codex CLI through the user's own account.
-- Spawn CLI subprocesses from Electron main process.
+- Spawn CLI subprocesses from the FastAPI backend.
 - Wrap all model calls behind an internal `LLMClient` interface.
 
 Important packages:
 
-- Node.js `child_process` or `execa` for subprocess execution.
-- `zod` for output validation.
+- Python `subprocess` or `asyncio.create_subprocess_exec` for Codex CLI execution.
+- Pydantic for output validation on the backend.
 - `uuid` for document IDs, trace IDs, and job IDs.
+- Zod can still be used in the frontend for validating UI-facing JSON payloads.
 
 Recommended abstraction:
 
@@ -144,6 +188,14 @@ Recommended abstraction:
 interface LLMClient {
   runJson<T>(task: string, prompt: string, schema: z.ZodSchema<T>): Promise<T>;
 }
+```
+
+FastAPI/Python equivalent:
+
+```py
+class LLMClient:
+    async def run_json(self, task: str, prompt: str, schema: type[BaseModel]) -> BaseModel:
+        ...
 ```
 
 Error categories to support:
@@ -158,13 +210,14 @@ Error categories to support:
 
 ### Agent Orchestration
 
-For the real TypeScript app:
+For the real Next.js/FastAPI app:
 
-- Implement lightweight internal workflows first.
+- Implement lightweight internal workflows in FastAPI first.
 - Use explicit functions/classes per agent.
-- Keep schemas strict with Zod.
+- Keep backend schemas strict with Pydantic.
+- Keep frontend payload schemas strict with TypeScript and optional Zod.
 
-For Lab 3 compatibility:
+Only if Lab 3 strictly requires the original stack:
 
 - LangGraph
 - LangChain
@@ -173,12 +226,13 @@ For Lab 3 compatibility:
 
 Recommended approach:
 
-- Build the real product architecture in TypeScript/Electron.
-- If the lab strictly requires LangGraph, create a Python prototype or compatibility layer with the same conceptual agents.
+- Build the real product architecture in Next.js + FastAPI.
+- If the lab strictly requires LangGraph/Gradio, keep that as a separate compatibility prototype, not the product UI.
 
 ### Structured Output Validation
 
-- `zod` for all TypeScript schemas.
+- Pydantic for backend LLM output schemas.
+- TypeScript types and optional Zod for frontend payload validation.
 - Use JSON schema-like prompts and repair retries.
 - Every LLM-generated artifact should validate before being saved:
   - concept tags
@@ -194,6 +248,7 @@ Recommended first renderers:
 - KaTeX for formula walkthroughs.
 - Plotly.js for function plots and distributions.
 - Three.js with predefined scene templates.
+- `@react-three/fiber` for React-native Three.js components.
 - HTML Canvas for simple 2D animations.
 
 Suggested packages:
@@ -203,12 +258,14 @@ Suggested packages:
 - `plotly.js`
 - `react-plotly.js`
 - `three`
-- `@react-three/fiber`, optional later
-- `@react-three/drei`, optional later
+- `@react-three/fiber`
+- `@react-three/drei`
+- `framer-motion`, optional for UI transitions
 
 Safety rule:
 
 - The LLM should output structured visualization specs, not arbitrary executable JavaScript.
+- Three.js scenes should be generated from trusted templates such as `molecule`, `pendulum`, `orbit`, `anatomy-part`, `vector-space`, or `process-flow`.
 
 ### Knowledge Graph Rendering
 
@@ -269,7 +326,8 @@ Possible later tools:
 
 MVP recommendation:
 
-- Store job status in SQLite and run simple async workers in Electron main process.
+- Store job status in SQLite and run simple async workers in FastAPI.
+- Use background tasks or a lightweight internal worker first.
 
 ### Testing
 
@@ -280,9 +338,11 @@ TypeScript app:
 - Playwright for end-to-end desktop/web flows later
 - Zod schema tests
 
-Python Lab prototype:
+FastAPI backend:
 
 - pytest
+- httpx test client
+- Pydantic schema tests
 
 Recommended MVP tests:
 
@@ -302,14 +362,19 @@ Use after the core app works:
 - PostgreSQL container
 - local Langfuse web server on `http://localhost:3000`
 
-Python/LangGraph integration:
+FastAPI integration:
+
+- Langfuse Python SDK
+- Manual trace/span/generation logging around agent calls
+
+LangGraph compatibility prototype, if used:
 
 - `langfuse.callback.CallbackHandler`
 
-TypeScript/Electron integration:
+Next.js frontend integration:
 
-- Langfuse SDK, if compatible with the app runtime
-- Otherwise log structured events locally and export screenshots/metrics for the lab
+- Usually keep Langfuse writes in FastAPI, not the browser.
+- Frontend can send feedback events to FastAPI, then FastAPI logs scores to Langfuse.
 
 Track:
 
@@ -346,24 +411,24 @@ documents/
 user-data/
 venv/
 __pycache__/
+.pytest_cache/
+uploads/
+*.db
 ```
 
 ### Suggested Initial Dependency List
 
-For the TypeScript/Electron app:
+For the Next.js frontend:
 
 ```text
-electron
 next
 react
 react-dom
 typescript
 tailwindcss
+shadcn/ui
 zod
-better-sqlite3
-drizzle-orm
 uuid
-execa
 pdfjs-dist
 reactflow
 katex
@@ -371,11 +436,35 @@ react-katex
 plotly.js
 react-plotly.js
 three
+@react-three/fiber
+@react-three/drei
+framer-motion
 vitest
 @testing-library/react
+playwright
 ```
 
-For the Python Lab 3 prototype if needed:
+For the FastAPI backend:
+
+```text
+fastapi
+uvicorn
+pydantic
+python-multipart
+pytest
+httpx
+python-dotenv
+pypdf
+pymupdf
+chromadb
+faiss-cpu
+langchain
+langchain-community
+langchain-openai
+langfuse
+```
+
+For a separate Lab 3 prototype only if required:
 
 ```text
 langgraph
@@ -609,36 +698,38 @@ Important label:
 - The user authenticates locally with their own OpenAI/Codex account.
 - First version can require Codex CLI to be installed locally.
 - Later versions can bundle platform-specific Codex CLI binaries.
-- Implement a thin internal abstraction so agents do not depend directly on CLI details.
+- Implement a thin FastAPI backend abstraction so agents do not depend directly on CLI details.
 
-Suggested interface:
+Suggested FastAPI interface:
 
-```ts
-interface LLMClient {
-  runJson<T>(task: string, prompt: string, schema: z.ZodSchema<T>): Promise<T>;
-}
+```py
+from pydantic import BaseModel
+
+class LLMClient:
+    async def run_json(self, task: str, prompt: str, schema: type[BaseModel]) -> BaseModel:
+        ...
 ```
 
 Suggested implementation:
 
-```ts
-class CodexCliClient implements LLMClient {
-  async runJson<T>(task: string, prompt: string, schema: z.ZodSchema<T>): Promise<T> {
-    // spawn Codex CLI
-    // capture stdout/stderr
-    // parse JSON
-    // validate with Zod
-    // retry once with repair prompt if invalid
-    // classify errors
-  }
-}
+```py
+class CodexCliClient(LLMClient):
+    async def run_json(self, task: str, prompt: str, schema: type[BaseModel]) -> BaseModel:
+        # spawn Codex CLI
+        # capture stdout/stderr
+        # parse JSON
+        # validate with Pydantic
+        # retry once with repair prompt if invalid
+        # classify errors
+        ...
 ```
 
 Keep now:
 
 - `codex login` setup flow.
 - Codex subprocess wrapper.
-- Zod schema validation.
+- Pydantic schema validation in FastAPI.
+- Optional Zod validation in Next.js for UI payloads.
 - JSON repair retry.
 - Error classification.
 
@@ -652,10 +743,11 @@ Verify before depending on:
 ### 9. Local Database
 
 - Use SQLite as the local source of truth.
-- Recommended stack for Electron/TypeScript:
-  - `better-sqlite3`
-  - `drizzle-orm`
-  - Drizzle migrations
+- Recommended stack for FastAPI:
+  - SQLite
+  - SQLAlchemy or SQLModel
+  - Alembic migrations, optional
+  - direct `sqlite3` is acceptable for MVP
 - Use filesystem for large files and SQLite for metadata/state.
 
 Store in filesystem:
@@ -704,16 +796,16 @@ AppData/
         visual-specs/
 ```
 
-### 10. Lab 3 Compatibility
+### 10. Lab 3 Compatibility, Separate From Product UI
 
-Lab 3 expects a multi-agent LangGraph/RAG chatbot with Gradio. If this project is used for Lab 3, include:
+Lab 3 expects a multi-agent LangGraph/RAG chatbot with Gradio. The product target is **not Gradio**. If the course strictly requires the original lab stack, keep a separate lab prototype or compatibility branch that includes:
 
 - Router Agent
 - PDF RAG Agent
 - Concept Spotter Agent
 - Visualization Planner Agent
 - Knowledge Graph Builder Agent
-- Gradio or web UI
+- Gradio UI for lab compliance only
 - Unit tests for routing
 - README with setup and architecture
 
@@ -725,6 +817,8 @@ Minimum Lab 3 deliverables:
 - at least 6 pytest tests or equivalent tests
 - interactive UI
 - documentation
+
+Do not let the Gradio prototype drive the main product UX. The main product should remain Next.js + FastAPI.
 
 ### 11. Lab 4 Compatibility
 
@@ -825,22 +919,25 @@ Add after core functionality works.
 
 ## Suggested Implementation Order
 
-1. Create project skeleton.
-2. Add SQLite database and migrations.
-3. Implement PDF upload, page count check, and text extraction.
-4. Store documents and extracted pages locally.
-5. Implement Codex CLI wrapper with Zod validation.
-6. Implement concept spotting for one uploaded PDF.
-7. Render concept tags in the UI.
-8. Implement visual sandbox JSON specs and 1-2 renderers.
-9. Implement minimal RAG/scoped chat with page references.
-10. Implement Knowledge Graph generation and sanitization.
-11. Render the graph using a library.
-12. Add four-axis mastery fields and color-coded nodes.
-13. Add simple explicit mastery evaluation.
-14. Add tests.
-15. Add README.
-16. Add Langfuse integration for Lab 4, if needed.
+1. Create a monorepo or two-folder structure: `frontend/` for Next.js and `backend/` for FastAPI.
+2. Add FastAPI health endpoint and Next.js shell layout.
+3. Add SQLite database schema and migrations or initialization scripts.
+4. Implement PDF upload API, page count check, machine-readable text check, and text extraction.
+5. Store original PDFs and extracted pages locally.
+6. Implement retrieval/chunking for scoped PDF chat.
+7. Implement Codex CLI wrapper in FastAPI with Pydantic validation and JSON repair retry.
+8. Implement concept spotting for one uploaded PDF.
+9. Render PDF text/pages and concept tags in Next.js.
+10. Implement visual sandbox JSON specs and 1-2 renderers.
+11. Add Three.js/React Three Fiber template renderer for one high-impact scene type.
+12. Implement minimal scoped PDF chat with page references.
+13. Implement Knowledge Graph generation and sanitization.
+14. Render the graph using React Flow or Cytoscape.js.
+15. Add four-axis mastery fields and color-coded nodes.
+16. Add simple explicit mastery evaluation.
+17. Add backend pytest tests and frontend Vitest tests.
+18. Add README with local run commands for frontend and backend.
+19. Add Langfuse integration if needed for Lab 4 or debugging.
 
 ## Suggested Agents
 
@@ -893,9 +990,9 @@ Updates four-axis demonstrated mastery scores from recent student evidence.
 
 ## Open Questions To Decide Later
 
-- Final app shell: Electron, Tauri, Next.js local app, or Gradio first?
+- Final packaged app shell: Electron or Tauri after the local Next.js/FastAPI app works?
 - Exact Codex CLI programmatic interface available in current version.
 - Whether persistent Codex threads are officially supported and stable.
-- Whether Lab 3 submission must strictly use LangGraph and Python, or whether TypeScript/Electron is acceptable.
-- Whether to add vector RAG immediately or only for Lab compatibility.
+- Whether Lab 3 submission must strictly use LangGraph and Gradio, separate from the product stack.
+- Whether to add vector RAG immediately or start with keyword/BM25 retrieval.
 - Which visualization types should be implemented first.

@@ -1,12 +1,29 @@
+# Local Environment
 .env
-node_modules/
-dist/
-build/
-.next/
-app.db
-*.sqlite
-documents/
-user-data/
-venv/
+backend/.env
+
+# Node / Next.js Build Artifacts
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# Python / Pytest Cache
 __pycache__/
+backend/__pycache__/
+backend/app/__pycache__/
+backend/tests/__pycache__/
 .pytest_cache/
+backend/.pytest_cache/
+*.pyc
+
+# Local upload / sqlite storage
+backend/uploads/
+backend/user-data/
+user-data/
+data/sqlite.db
+backend/sqlite.db
+
+# OS / Editor files
+.DS_Store
+.vscode/
+.idea/

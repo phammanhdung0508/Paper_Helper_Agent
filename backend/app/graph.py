@@ -8,6 +8,13 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from app import config
 from app import database
+from app.llm_client import CodexCliClient, run_async
+
+_app_dir = os.path.dirname(os.path.abspath(__file__))
+_project_root = os.path.dirname(os.path.dirname(_app_dir))
+
+class TextResponse(BaseModel):
+    response: str = Field(description="The textual reply to the user query.")
 
 # Define Graph State
 class AgentState(BaseModel):
@@ -70,9 +77,7 @@ def router_node(state: AgentState) -> Dict[str, Any]:
         return {"route": route, "context": []}
         
     try:
-        # Initialize small model for routing
-        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=config.OPENAI_API_KEY)
-        structured_llm = llm.with_structured_output(RouteDecision)
+        client = CodexCliClient()
         
         # We prompt the router
         system_prompt = (
@@ -80,10 +85,12 @@ def router_node(state: AgentState) -> Dict[str, Any]:
             "If the query is related to the uploaded document context or company policies (travel, remote work, equipment), select 'rag'. "
             "If it is general chit-chat, math, programming, general knowledge, greetings, select 'general'."
         )
-        decision = structured_llm.invoke([
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=f"Query to route: {query}")
-        ])
+        prompt = f"System Prompt:\n{system_prompt}\n\nQuery to route: {query}"
+        decision = run_async(client.run_json(
+            task="route_query",
+            prompt=prompt,
+            schema=RouteDecision
+        ))
         return {"route": decision.route, "context": []}
     except Exception as e:
         print(f"Error in router LLM: {e}. Falling back to default routing.")
@@ -99,24 +106,33 @@ def general_agent_node(state: AgentState) -> Dict[str, Any]:
         return {"messages": [AIMessage(content=reply)]}
         
     try:
-        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7, openai_api_key=config.OPENAI_API_KEY)
+        client = CodexCliClient()
         system_prompt = (
             "You are a friendly, helpful general corporate assistant. Answer the user's questions clearly. "
             "Keep the responses engaging, professional, and concise."
         )
         # Format chat history
-        chat_history = []
+        history_text = ""
         for msg in state.messages[:-1]:
-            chat_history.append(msg)
+            sender = "User" if getattr(msg, "type", "") == "human" else "Assistant"
+            content = getattr(msg, "content", str(msg))
+            history_text += f"{sender}: {content}\n"
         
         user_query = state.messages[-1]
+        query_content = getattr(user_query, "content", str(user_query))
         
-        response = llm.invoke([
-            SystemMessage(content=system_prompt),
-            *chat_history,
-            user_query
-        ])
-        return {"messages": [response]}
+        prompt = (
+            f"System Prompt:\n{system_prompt}\n\n"
+            f"Chat History:\n{history_text}\n"
+            f"User: {query_content}"
+        )
+        
+        llm_reply = run_async(client.run_json(
+            task="general_chat",
+            prompt=prompt,
+            schema=TextResponse
+        ))
+        return {"messages": [AIMessage(content=llm_reply.response)]}
     except Exception as e:
         return {"messages": [AIMessage(content=f"Error in General Agent: {str(e)}")]}
 
@@ -144,7 +160,7 @@ def rag_agent_node(state: AgentState) -> Dict[str, Any]:
         print(f"Error retrieving context: {e}")
         # Let's fallback to querying SQLite text or policies directly if Chroma isn't indexed
         if doc_id == "company_policies":
-            policies_file = os.path.join("data", "company_policies.txt")
+            policies_file = os.path.join(_project_root, "data", "company_policies.txt")
             if os.path.exists(policies_file):
                 with open(policies_file, "r") as f:
                     context_chunks = [f"[Page 1]: {f.read()}"]
@@ -165,7 +181,7 @@ def rag_agent_node(state: AgentState) -> Dict[str, Any]:
         return {"messages": [AIMessage(content=reply)], "context": context_chunks}
         
     try:
-        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=config.OPENAI_API_KEY)
+        client = CodexCliClient()
         system_prompt = (
             "You are a strict Retrieval-Augmented Generation (RAG) assistant. "
             "Your task is to answer the user query ONLY using the provided retrieved context. "
@@ -176,19 +192,27 @@ def rag_agent_node(state: AgentState) -> Dict[str, Any]:
             f"--- START RETRIEVED CONTEXT ---\n{context_str}\n--- END RETRIEVED CONTEXT ---"
         )
         # Format chat history
-        chat_history = []
+        history_text = ""
         for msg in state.messages[:-1]:
-            # Convert to LangChain message class if dictionary
-            chat_history.append(msg)
+            sender = "User" if getattr(msg, "type", "") == "human" else "Assistant"
+            content = getattr(msg, "content", str(msg))
+            history_text += f"{sender}: {content}\n"
             
         user_query = state.messages[-1]
+        query_content = getattr(user_query, "content", str(user_query))
         
-        response = llm.invoke([
-            SystemMessage(content=system_prompt),
-            *chat_history,
-            user_query
-        ])
-        return {"messages": [response], "context": context_chunks}
+        prompt = (
+            f"System Prompt:\n{system_prompt}\n\n"
+            f"Chat History:\n{history_text}\n"
+            f"User: {query_content}"
+        )
+        
+        llm_reply = run_async(client.run_json(
+            task="rag_chat",
+            prompt=prompt,
+            schema=TextResponse
+        ))
+        return {"messages": [AIMessage(content=llm_reply.response)], "context": context_chunks}
     except Exception as e:
         return {"messages": [AIMessage(content=f"Error in RAG Agent: {str(e)}")], "context": context_chunks}
 
