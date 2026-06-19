@@ -59,7 +59,12 @@ class ConceptGraphAgent:
             return ConceptGraphAgent._mock_graph(doc_id)
             
         try:
-            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=config.OPENAI_API_KEY)
+            llm = ChatOpenAI(
+                model="gpt-4o-mini",
+                temperature=0,
+                openai_api_key=config.OPENAI_API_KEY,
+                max_retries=3
+            )
             structured_llm = llm.with_structured_output(KnowledgeGraph)
             
             # Since document text can be long, we take a slice of the text
@@ -148,7 +153,12 @@ class VisualSandboxAgent:
             return VisualSandboxAgent._mock_spec(doc_id, concept_id, concept_label)
             
         try:
-            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=config.OPENAI_API_KEY)
+            llm = ChatOpenAI(
+                model="gpt-4o-mini",
+                temperature=0,
+                openai_api_key=config.OPENAI_API_KEY,
+                max_retries=3
+            )
             structured_llm = llm.with_structured_output(VisualSpecOutput)
             
             prompt = (
@@ -268,7 +278,12 @@ class MasteryEvaluatorAgent:
             return f"Explain the core concept of '{concept_label}' and list two main features or details of it."
             
         try:
-            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7, openai_api_key=config.OPENAI_API_KEY)
+            llm = ChatOpenAI(
+                model="gpt-4o-mini",
+                temperature=0.7,
+                openai_api_key=config.OPENAI_API_KEY,
+                max_retries=3
+            )
             prompt = (
                 f"You are an academic examiner. Generate one short, challenging essay question to evaluate a student's comprehension of the following concept:\n"
                 f"Concept: {concept_label}\n"
@@ -304,7 +319,12 @@ class MasteryEvaluatorAgent:
             }
             
         try:
-            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=config.OPENAI_API_KEY)
+            llm = ChatOpenAI(
+                model="gpt-4o-mini",
+                temperature=0,
+                openai_api_key=config.OPENAI_API_KEY,
+                max_retries=3
+            )
             structured_llm = llm.with_structured_output(MasteryAssessment)
             
             prompt = (
