@@ -27,7 +27,7 @@ services:
       - NEXTAUTH_SECRET=my_super_secret_nextauth_key_at_least_32_characters_long
       - NEXTAUTH_URL=http://localhost:3000
       - TELEMETRY_ENABLED=false
-      - LANGFUSE_INIT_PROJECT_NAME=DDM501-Enterprise-Support
+      - LANGFUSE_INIT_PROJECT_NAME=Enterprise-Support
       - LANGFUSE_ENABLE_SIGN_UP=true
 
 volumes:

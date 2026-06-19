@@ -1,4 +1,4 @@
-# Paper Helper & Visual Study Companion (DDM501)
+# Paper Helper & Visual Study Companion
 
 A local-first, multi-agent conversational AI assistant and visual study companion. It transforms text-based PDFs into interactive learning networks. 
 
