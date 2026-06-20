@@ -5,8 +5,16 @@ import uuid
 import pypdf
 from typing import List, Dict, Any, Tuple
 import json
+import warnings
 
 from app import config
+
+# Silence LangChainDeprecationWarning
+try:
+    from langchain_core._api import LangChainDeprecationWarning
+    warnings.filterwarnings("ignore", category=LangChainDeprecationWarning)
+except ImportError:
+    pass
 
 # SQLite Helpers
 def get_db_connection():

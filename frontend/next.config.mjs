@@ -5,6 +5,14 @@ const nextConfig = {
     workerThreads: false,
     cpus: 1,
   },
+  webpack(config) {
+    config.resolve = config.resolve || {};
+    config.resolve.fallback = {
+      ...(config.resolve.fallback || {}),
+      canvas: false,
+    };
+    return config;
+  },
   async rewrites() {
     return [
       {
