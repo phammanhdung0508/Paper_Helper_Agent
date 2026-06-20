@@ -5,8 +5,11 @@ import uuid
 import pypdf
 from typing import List, Dict, Any, Tuple
 import json
+import logging
 
 from app import config
+
+logger = logging.getLogger(__name__)
 
 # SQLite Helpers
 def get_db_connection():
@@ -280,8 +283,10 @@ def delete_document(doc_id: str):
     try:
         vector_store = get_vector_store(doc_id)
         vector_store.delete_collection()
-    except Exception:
-        pass
+    except ValueError as e:
+        logger.info(f"Chroma collection for doc_id {doc_id} does not exist or was already deleted: {e}")
+    except Exception as e:
+        logger.error(f"Error deleting Chroma collection for doc_id {doc_id}: {e}", exc_info=True)
 
 def get_document_pages(doc_id: str) -> List[Dict[str, Any]]:
     conn = get_db_connection()
