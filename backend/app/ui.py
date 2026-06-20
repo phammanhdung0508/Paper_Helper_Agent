@@ -12,6 +12,7 @@ from app import database
 from app import visualizer
 from app import graph
 from app.agents import ConceptGraphAgent, VisualSandboxAgent, MasteryEvaluatorAgent
+from dotenv import set_key
 
 # Global state / caches
 active_document_id = None
@@ -477,13 +478,19 @@ def handle_clear_chat(session_id):
     return [], gr.update(value=str(uuid.uuid4())), "*Assistant Status: Chat history cleared.*"
 
 def handle_save_config(openai_key):
+    # Sanitize the key to prevent newline injection
+    openai_key = str(openai_key).strip().replace("\n", "").replace("\r", "")
     config.OPENAI_API_KEY = openai_key
     try:
-        with open(".env", "w") as f:
-            f.write(f"OPENAI_API_KEY={openai_key}\n")
-            f.write(f"LANGFUSE_PUBLIC_KEY={config.LANGFUSE_PUBLIC_KEY}\n")
-            f.write(f"LANGFUSE_SECRET_KEY={config.LANGFUSE_SECRET_KEY}\n")
-            f.write(f"LANGFUSE_HOST={config.LANGFUSE_HOST}\n")
+        env_file = ".env"
+        if not os.path.exists(env_file):
+            open(env_file, 'a').close()
+
+        set_key(env_file, "OPENAI_API_KEY", openai_key)
+        set_key(env_file, "LANGFUSE_PUBLIC_KEY", str(config.LANGFUSE_PUBLIC_KEY) if config.LANGFUSE_PUBLIC_KEY else "")
+        set_key(env_file, "LANGFUSE_SECRET_KEY", str(config.LANGFUSE_SECRET_KEY) if config.LANGFUSE_SECRET_KEY else "")
+        set_key(env_file, "LANGFUSE_HOST", str(config.LANGFUSE_HOST) if config.LANGFUSE_HOST else "")
+
         return "Configurations saved successfully!"
     except Exception as e:
         return f"Failed to save .env file: {str(e)}"
