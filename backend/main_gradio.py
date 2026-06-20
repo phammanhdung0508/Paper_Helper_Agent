@@ -3,7 +3,7 @@ from app import database
 from app import config
 
 def initialize_default_policies():
-    """Ensures that the default company policies are loaded for Lab 3 compatibility."""
+    """Ensures that the default company policies are loaded."""
     docs = database.get_documents()
     has_policies = any(d["id"] == "company_policies" for d in docs)
     

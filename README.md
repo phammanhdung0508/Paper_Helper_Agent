@@ -14,20 +14,27 @@ graph TD
     NextJS -- "API Proxy (/api/*)" --> FastAPI[FastAPI Backend Server]
     FastAPI <--> DB[(SQLite Database)]
     FastAPI <--> VectorStore[(Chroma Vector Store)]
-    FastAPI <--> Graph[LangGraph Agent Workflow]
+    FastAPI <--> Supervisor[Supervisor Agent Layer]
     
-    subgraph LangGraph Flow
-        Router{Intent Router}
-        Router -- "general" --> GenAgent[General Chatbot Agent]
-        Router -- "rag" --> RAGAgent[PDF RAG Agent]
-        GenAgent --> End([End])
-        RAGAgent --> End
+    Supervisor -- "Orchestrates & Routes" --> Agents
+    Supervisor -- "Queries / Logs" --> LLMRouter[LLM Router Client]
+    
+    subgraph LLM Routing Layer
+        LLMRouter <--> LLMCache[(SQLite llm_cache)]
+        LLMRouter --> LLMLog[(SQLite llm_call_log)]
+        LLMRouter -- "Provider Fallback" --> LLMProviders
+        subgraph LLMProviders
+            Gemini[GeminiClient - Gemini SDK]
+            Codex[CodexCliClient - Codex CLI]
+            Mock[MockLLMClient - Deterministic Offline]
+        end
     end
     
-    subgraph Agents & Utilities
+    subgraph Agents
         ConceptSpotter[Concept Spotter Agent]
-        VisPlanner[Visualization Planner Agent]
+        VisPlanner[Visual Sandbox Agent]
         MasteryEval[Mastery Evaluator Agent]
+        GraphWorkflow[LangGraph Chat Workflow]
     end
     
     FastAPI --> Langfuse[(Self-Hosted Langfuse DB)]

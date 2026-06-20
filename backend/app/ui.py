@@ -175,7 +175,7 @@ def update_doc_list():
     docs = database.get_documents()
     choices = [(d["name"], d["id"]) for d in docs]
     if not choices:
-        choices = [("Lab 3 Company Policies", "company_policies")]
+        choices = [("Default Company Policies", "company_policies")]
     
     active_id = active_document_id or (choices[0][1] if choices else "")
     return gr.update(choices=choices, value=active_id), choices
@@ -412,15 +412,18 @@ def handle_chat(query, chat_history, doc_id, session_id):
     if callbacks:
         config_dict["callbacks"] = callbacks
         
-    inputs = {
-        "messages": messages,
-        "current_doc_id": doc_id or "company_policies"
-    }
-    
     try:
-        response = graph.graph.invoke(inputs, config_dict)
-        ai_reply = response["messages"][-1].content
-        route_taken = response.get("route", "unknown")
+        from app.supervisor import supervisor
+        res = supervisor.route_and_execute("chat", {
+            "messages": messages,
+            "current_doc_id": doc_id or "company_policies",
+            "config_dict": config_dict
+        })
+        if res.get("status") == "error":
+            raise Exception(res.get("message"))
+            
+        ai_reply = res["ai_reply"]
+        route_taken = res["route_taken"]
         
         chat_history.append((query, ai_reply))
         database.add_chat_message(session_id, "user", query, trace_id)

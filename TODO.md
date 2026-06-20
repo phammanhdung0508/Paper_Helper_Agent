@@ -216,6 +216,8 @@ For the real Next.js/FastAPI app:
 - Use explicit functions/classes per agent.
 - Keep backend schemas strict with Pydantic.
 - Keep frontend payload schemas strict with TypeScript and optional Zod.
+- Add a lightweight Supervisor Agent as the central orchestration layer.
+- Keep the Supervisor mostly deterministic/config-driven, not a costly LLM call for every request.
 
 Only if Lab 3 strictly requires the original stack:
 
@@ -228,6 +230,166 @@ Recommended approach:
 
 - Build the real product architecture in Next.js + FastAPI.
 - If the lab strictly requires LangGraph/Gradio, keep that as a separate compatibility prototype, not the product UI.
+
+### Supervisor Agent
+
+Add a lightweight Supervisor Agent above the specialist agents.
+
+Purpose:
+
+- Decide the high-level task route.
+- Select the correct specialist agent.
+- Select the LLM provider/fallback order for that task.
+- Execute the specialist agent.
+- Validate structured outputs.
+- Retry or fall back when provider/model calls fail.
+- Return the final response or a graceful error.
+
+Recommended flow:
+
+```text
+User Request
+  -> Supervisor Agent
+     -> Router decision
+     -> Select specialist agent
+     -> Select LLM provider order
+     -> Execute specialist agent
+     -> Validate result
+     -> Retry/fallback if needed
+  -> Final Response
+```
+
+Specialist agents under Supervisor:
+
+- General Agent
+- RAG Agent
+- Concept Spotter Agent
+- Knowledge Graph Builder Agent
+- Visual Sandbox Agent
+- Mastery Evaluator Agent
+
+Important design rule:
+
+- Supervisor should not replace specialist agents.
+- Supervisor should orchestrate and enforce policy.
+- Use deterministic rules/config first.
+- Only use an LLM inside Supervisor if routing cannot be solved reliably with rules.
+
+### Advanced LLM Routing And Fallbacks
+
+Add an LLM routing layer inspired by the deployment strategy notes on hybrid architecture, model tiering, caching, feature flags, and rollback/fallback design.
+
+Goal:
+
+- Keep Codex as the main high-quality provider.
+- Add Gemini or other free/cheap providers for development/testing and low-risk tasks.
+- Route by task complexity and provider availability.
+- Fall back automatically on rate limits, auth failures, timeouts, invalid JSON, or provider crashes.
+
+Recommended provider architecture:
+
+```text
+BaseLLMClient
+  -> CodexCliClient
+  -> GeminiClient
+  -> OpenAIClient, optional
+  -> MockLLMClient, for tests/offline mode
+
+LLMRouterClient
+  -> reads task type
+  -> checks cache
+  -> chooses provider order
+  -> retries/fallbacks
+  -> validates output
+  -> logs result
+```
+
+All providers should expose the same interface:
+
+```py
+class BaseLLMClient:
+    async def run_json(self, task: str, prompt: str, schema: type[BaseModel]) -> BaseModel:
+        ...
+```
+
+Recommended task routing:
+
+```text
+route_query               -> local rules, gemini, codex
+general_chat              -> gemini, codex
+rag_chat                  -> codex, gemini
+extract_knowledge_graph   -> gemini, codex
+generate_visual_spec      -> gemini, codex
+evaluate_mastery_response -> gemini, codex
+```
+
+Fallback triggers:
+
+- `rate_limit`
+- `auth_lost`
+- `timeout`
+- `invalid_json`
+- `subprocess_crash`
+- `empty_output`
+- `unknown`
+
+Example provider flow:
+
+```text
+1. Check exact cache.
+2. If cache hit, return cached JSON.
+3. If cache miss, call first provider.
+4. If provider succeeds and schema validates, store response in cache and return.
+5. If provider fails, log error and try next provider.
+6. If all providers fail, return graceful offline/error response.
+```
+
+Suggested `.env` configuration:
+
+```env
+ENABLE_LLM_FALLBACK=true
+LLM_ROUTER_PROVIDER=local,gemini,codex
+LLM_GENERAL_PROVIDER=gemini,codex
+LLM_RAG_PROVIDER=codex,gemini
+LLM_KG_PROVIDER=gemini,codex
+LLM_VISUAL_PROVIDER=gemini,codex
+LLM_EVAL_PROVIDER=gemini,codex
+
+GEMINI_API_KEY=your-gemini-key
+OPENAI_API_KEY=your-openai-key
+```
+
+Add SQLite tables for optimization and monitoring:
+
+```text
+llm_cache
+  id
+  task
+  prompt_hash
+  schema_name
+  response_json
+  provider
+  created_at
+
+llm_call_log
+  id
+  task
+  provider
+  success
+  latency_ms
+  error_category
+  cache_hit
+  created_at
+```
+
+Advanced routing tests to add:
+
+- Gemini fails, Codex fallback succeeds.
+- Codex rate-limited, Gemini fallback succeeds.
+- Invalid JSON triggers repair retry.
+- Cache hit avoids provider call.
+- Task maps to expected provider order.
+- All providers fail and return graceful error.
 
 ### Structured Output Validation
 
