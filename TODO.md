@@ -6,6 +6,48 @@ Build a local-first study companion that transforms text-based PDFs into interac
 
 The project should run locally on the user's computer and use the user's own OpenAI Codex CLI account where possible. The app should not require a paid hosted backend or proxy user documents through a developer-owned server. Gradio is not the target UI for the product.
 
+## Current Implementation Status
+
+Latest UI direction:
+
+- The frontend has been copied/adapted from `get-it` for a cleaner product-style UI.
+- The app now includes `get-it`-style Upload, Library, Viewer, PDF viewer, right-pane tools, visualizer components, KG view, and Codex health/account UI.
+- The copied UI also brought in Next.js API routes and a TypeScript runtime layer under `frontend/src/lib`, so the frontend is no longer just a thin client over FastAPI.
+- This may conflict with the original FastAPI-first architecture because `/api/*` routes can now be served by Next.js instead of proxied to FastAPI.
+
+Recent compatibility fixes:
+
+- Added missing UI/runtime dependencies: `framer-motion`, `pdfjs-dist`, `three`, `react-markdown`, `remark-math`, `rehype-katex`, `zod`, `@openai/codex-sdk`, `clsx`, and `@types/three`.
+- Downgraded `pdfjs-dist` to `3.11.174` for Node 18 compatibility.
+- Updated PDF.js imports to v3-compatible paths and added `public/pdf.worker.min.js`.
+- Converted copied Tailwind v4 CSS directives back to Tailwind v3-compatible directives.
+- Removed unsupported `next/font/google` `Geist` helpers for this Next 14 app.
+- Added `target: "es2017"` to `frontend/tsconfig.json` for copied modern iteration code.
+- Added a webpack fallback for optional `canvas` imports used by PDF.js.
+
+PDF upload policy update:
+
+- `too_many_pages`, unreadable/corrupted/encrypted PDFs, and non-PDF files still fail.
+- `no_text` and `image_dominant` PDFs are now accepted with a warning instead of rejected.
+- If server-side PDF text extraction fails but the PDF appears to contain page objects and is not encrypted, upload falls back to viewer-only mode with empty text placeholders.
+- Viewer-only PDFs can be displayed, but RAG, concept spotting, tags, quizzes, and mastery tools may be limited until OCR is added.
+
+Latest verification:
+
+- `frontend`: `npm run lint` passes with warnings.
+- `frontend`: `npm run build` passes with warnings.
+- Existing warnings:
+- React hook dependency warnings in copied `CodexHealthBanner.tsx` and `KnowledgeGraphView.tsx`.
+- Webpack warning in copied `codex-account.ts` around `module.createRequire`.
+
+Immediate follow-ups:
+
+- Test upload/viewer flow manually with a normal text PDF and a screenshot/image-heavy PDF.
+- Decide whether to keep the copied Next.js API routes or restore the FastAPI proxy architecture.
+- If keeping copied Next routes, document that the app is becoming a Next.js-local-runtime app rather than pure Next.js + FastAPI.
+- Add an OCR path for viewer-only/image-heavy PDFs if screenshot PDFs need RAG/chat/concept extraction.
+- Surface upload warnings visibly in the viewer instead of only preserving the warning code in the URL.
+
 ## Recommended Tools And Technologies
 
 ### Target Architecture

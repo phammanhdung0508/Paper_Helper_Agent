@@ -6,7 +6,13 @@
  * text items with their PDF-space positions.
  */
 
-import { getDocument } from "pdfjs-dist/legacy/build/pdf.js";
+import { getDocument, GlobalWorkerOptions } from "pdfjs-dist/legacy/build/pdf.js";
+
+if (typeof window === "undefined") {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const pdfjsWorker = require("pdfjs-dist/legacy/build/pdf.worker.js");
+  GlobalWorkerOptions.workerSrc = pdfjsWorker;
+}
 
 /**
  * Hard ceiling on document length. Beyond this the one-shot agent workflows

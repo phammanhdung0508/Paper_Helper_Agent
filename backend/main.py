@@ -81,11 +81,14 @@ def initialize_default_policies():
         else:
             print("Warning: data/company_policies.txt not found. Skip default initialization.")
 
-app = FastAPI(title="Paper Helper API Server", version="1.0.0")
+from contextlib import asynccontextmanager
 
-@app.on_event("startup")
-def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     initialize_default_policies()
+    yield
+
+app = FastAPI(title="Paper Helper API Server", version="1.0.0", lifespan=lifespan)
 
 # CORS middleware for local frontend development
 app.add_middleware(

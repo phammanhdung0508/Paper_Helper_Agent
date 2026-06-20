@@ -239,7 +239,7 @@ def generate_vis_html(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]], 
             
             var network = new vis.Network(container, data, options);
             
-            // Send selected node ID to Gradio via window message
+            // Send selected node ID to Next.js parent via window message
             network.on("selectNode", function (params) {{
                 if (params.nodes.length > 0) {{
                     var nodeId = params.nodes[0];

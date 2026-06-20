@@ -85,7 +85,6 @@ Access the dashboard at `http://localhost:3000`, sign up, create API credentials
    ```bash
    python main.py
    ```
-*(Note: If you need to run the legacy Gradio UI server for course compliance, execute `python main_gradio.py` which runs on `http://localhost:7860`).*
 
 ### 3. Frontend Application (Next.js)
 1. Navigate to the frontend directory:

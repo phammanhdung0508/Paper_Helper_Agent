@@ -142,7 +142,6 @@ class ConceptGraphAgent:
             {"doc_id": doc_id, "label": "RAG Agent", "explanation": "An agent that retrieves context from a vector store to generate precise, grounded answers.", "page_number": 5},
             {"doc_id": doc_id, "label": "Vector Store", "explanation": "A database for storing high-dimensional vector embeddings of text chunks for similarity matching.", "page_number": 4},
             {"doc_id": doc_id, "label": "Chroma DB", "explanation": "A local embedded vector database used in LangChain for fast similarity search.", "page_number": 4},
-            {"doc_id": doc_id, "label": "Gradio UI", "explanation": "A python library for building customizable web interfaces for machine learning models.", "page_number": 6},
             {"doc_id": doc_id, "label": "Langfuse", "explanation": "An open-source LLM engineering platform for self-hosted observability, tracing, and feedback evaluation.", "page_number": 2}
         ]
         
@@ -154,7 +153,6 @@ class ConceptGraphAgent:
             {"doc_id": doc_id, "source": f"{doc_id}_concept_router_node", "target": f"{doc_id}_concept_rag_agent", "type": "causal", "description": "Router Node triggers the RAG Agent if corporate queries are identified."},
             {"doc_id": doc_id, "source": f"{doc_id}_concept_rag_agent", "target": f"{doc_id}_concept_vector_store", "type": "composition", "description": "RAG Agent relies on Vector Store to fetch grounded context."},
             {"doc_id": doc_id, "source": f"{doc_id}_concept_vector_store", "target": f"{doc_id}_concept_chroma_db", "type": "specialisation", "description": "Chroma DB is a concrete embedded implementation of a Vector Store."},
-            {"doc_id": doc_id, "source": f"{doc_id}_concept_langgraph", "target": f"{doc_id}_concept_gradio_ui", "type": "parallel", "description": "Gradio UI wraps the compiled LangGraph workflow in an interactive web application."},
             {"doc_id": doc_id, "source": f"{doc_id}_concept_langgraph", "target": f"{doc_id}_concept_langfuse", "type": "parallel", "description": "Langfuse instruments LangGraph nodes and traces executions in production."}
         ]
         return nodes, edges
