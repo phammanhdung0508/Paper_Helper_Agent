@@ -71,7 +71,12 @@ def router_node(state: AgentState) -> Dict[str, Any]:
         
     try:
         # Initialize small model for routing
-        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=config.OPENAI_API_KEY)
+        llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0,
+            openai_api_key=config.OPENAI_API_KEY,
+            max_retries=3
+        )
         structured_llm = llm.with_structured_output(RouteDecision)
         
         # We prompt the router
@@ -99,7 +104,12 @@ def general_agent_node(state: AgentState) -> Dict[str, Any]:
         return {"messages": [AIMessage(content=reply)]}
         
     try:
-        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7, openai_api_key=config.OPENAI_API_KEY)
+        llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0.7,
+            openai_api_key=config.OPENAI_API_KEY,
+            max_retries=3
+        )
         system_prompt = (
             "You are a friendly, helpful general corporate assistant. Answer the user's questions clearly. "
             "Keep the responses engaging, professional, and concise."
@@ -165,7 +175,12 @@ def rag_agent_node(state: AgentState) -> Dict[str, Any]:
         return {"messages": [AIMessage(content=reply)], "context": context_chunks}
         
     try:
-        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=config.OPENAI_API_KEY)
+        llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0,
+            openai_api_key=config.OPENAI_API_KEY,
+            max_retries=3
+        )
         system_prompt = (
             "You are a strict Retrieval-Augmented Generation (RAG) assistant. "
             "Your task is to answer the user query ONLY using the provided retrieved context. "

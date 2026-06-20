@@ -477,13 +477,20 @@ def handle_clear_chat(session_id):
     return [], gr.update(value=str(uuid.uuid4())), "*Assistant Status: Chat history cleared.*"
 
 def handle_save_config(openai_key):
+    """
+    WARNING: In a production environment, allowing the application to write to its own
+    configuration files (like .env) is a security risk. It is recommended to use
+    Environment Variables or Secret Management services (e.g. AWS Secrets Manager).
+    """
     config.OPENAI_API_KEY = openai_key
     try:
-        with open(".env", "w") as f:
-            f.write(f"OPENAI_API_KEY={openai_key}\n")
-            f.write(f"LANGFUSE_PUBLIC_KEY={config.LANGFUSE_PUBLIC_KEY}\n")
-            f.write(f"LANGFUSE_SECRET_KEY={config.LANGFUSE_SECRET_KEY}\n")
-            f.write(f"LANGFUSE_HOST={config.LANGFUSE_HOST}\n")
+        from dotenv import set_key
+        dotenv_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+        # Ensure file exists
+        if not os.path.exists(dotenv_path):
+            with open(dotenv_path, "w") as f:
+                pass
+        set_key(dotenv_path, "OPENAI_API_KEY", openai_key)
         return "Configurations saved successfully!"
     except Exception as e:
         return f"Failed to save .env file: {str(e)}"
