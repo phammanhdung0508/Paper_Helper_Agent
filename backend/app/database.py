@@ -232,12 +232,14 @@ def ingest_document(file_path: str, custom_name: str = None) -> str:
     )
     
     pages_text = extract_pdf_pages(file_path)
-    for i, page_text in enumerate(pages_text):
-        page_id = f"{doc_id}_page_{i+1}"
-        cursor.execute(
-            "INSERT INTO pages (id, doc_id, page_number, text) VALUES (?, ?, ?, ?)",
-            (page_id, doc_id, i + 1, page_text)
-        )
+    page_data = [
+        (f"{doc_id}_page_{i+1}", doc_id, i + 1, page_text)
+        for i, page_text in enumerate(pages_text)
+    ]
+    cursor.executemany(
+        "INSERT INTO pages (id, doc_id, page_number, text) VALUES (?, ?, ?, ?)",
+        page_data
+    )
         
     conn.commit()
     conn.close()
