@@ -1,7 +1,10 @@
 import json
+import logging
 import os
 from typing import List, Dict, Any
 from app.agents import MasteryEvaluatorAgent
+
+logger = logging.getLogger(__name__)
 
 # Load local vis-network js content if available for offline usage, otherwise fallback to CDN
 _dir = os.path.dirname(os.path.abspath(__file__))
@@ -10,7 +13,8 @@ if os.path.exists(_local_js_path):
     try:
         with open(_local_js_path, "r", encoding="utf-8") as _f:
             _vis_js_content = f"<script type='text/javascript'>\n{_f.read()}\n</script>"
-    except Exception:
+    except (FileNotFoundError, IOError) as e:
+        logger.warning(f"Failed to read local vis-network.min.js: {e}. Falling back to CDN.")
         _vis_js_content = '<script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>'
 else:
     _vis_js_content = '<script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>'
@@ -21,7 +25,8 @@ if os.path.exists(_local_three_path):
     try:
         with open(_local_three_path, "r", encoding="utf-8") as _f:
             _three_js_content = f"<script type='text/javascript'>\n{_f.read()}\n</script>"
-    except Exception:
+    except (FileNotFoundError, IOError) as e:
+        logger.warning(f"Failed to read local three.min.js: {e}. Falling back to CDN.")
         _three_js_content = '<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>'
 else:
     _three_js_content = '<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>'
