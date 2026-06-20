@@ -252,7 +252,8 @@ def handle_pdf_upload(file, custom_name):
         choices = [(d["name"], d["id"]) for d in docs]
         return f"Successfully ingested PDF: **{custom_name or os.path.basename(file.name)}**", gr.update(choices=choices, value=doc_id)
     except Exception as e:
-        return f"**Ingestion Error:** {str(e)}", gr.update()
+        print(f"Ingestion Error: {e}")
+        return "**Ingestion Error:** Đã xảy ra lỗi hệ thống khi xử lý yêu cầu. Vui lòng thử lại sau.", gr.update()
 
 def handle_page_slide(doc_id, page_num):
     if not doc_id:
@@ -446,9 +447,10 @@ def handle_chat(query, chat_history, doc_id, session_id):
         status_md = f"*Assistant Status: Routed via **{route_taken.upper()} AGENT** | Trace ID: `{trace_id[:8]}...`*"
         return "", chat_history, status_md, trace_id
     except Exception as e:
-        err_reply = f"Error generating response: {str(e)}"
+        print(f"Chat Error: {e}")
+        err_reply = "Đã xảy ra lỗi hệ thống khi xử lý yêu cầu. Vui lòng thử lại sau."
         chat_history.append((query, err_reply))
-        return "", chat_history, f"*Assistant Status: Failed. {str(e)}*", trace_id
+        return "", chat_history, "*Assistant Status: Failed. Đã xảy ra lỗi hệ thống khi xử lý yêu cầu. Vui lòng thử lại sau.*", trace_id
 
 def handle_feedback(rating, trace_id):
     if not trace_id:
@@ -471,7 +473,8 @@ def handle_feedback(rating, trace_id):
         )
         return f"Feedback logged successfully: {'👍 Positive' if score_value == 1.0 else '👎 Negative'}"
     except Exception as e:
-        return f"Feedback Failed: {str(e)}"
+        print(f"Feedback Error: {e}")
+        return "Feedback Failed: Đã xảy ra lỗi hệ thống khi xử lý yêu cầu. Vui lòng thử lại sau."
 
 def handle_clear_chat(session_id):
     return [], gr.update(value=str(uuid.uuid4())), "*Assistant Status: Chat history cleared.*"
@@ -486,7 +489,8 @@ def handle_save_config(openai_key):
             f.write(f"LANGFUSE_HOST={config.LANGFUSE_HOST}\n")
         return "Configurations saved successfully!"
     except Exception as e:
-        return f"Failed to save .env file: {str(e)}"
+        print(f"Save Config Error: {e}")
+        return "Failed to save .env file: Đã xảy ra lỗi hệ thống khi xử lý yêu cầu. Vui lòng thử lại sau."
 
 def refresh_system_stats():
     conn = database.get_db_connection()
