@@ -96,6 +96,12 @@ export default function WorkspacePage() {
   const [sessionUUID, setSessionUUID] = useState<string>("");
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll chat
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatHistory]);
 
   // Initialize Session ID
   useEffect(() => {
@@ -593,8 +599,9 @@ export default function WorkspacePage() {
             </div>
             
             <div className="border-t border-slate-800 pt-3">
-              <label className="font-semibold text-sm text-slate-200 block mb-2">Select Active Workspace</label>
+              <label htmlFor="workspace-select" className="font-semibold text-sm text-slate-200 block mb-2">Select Active Workspace</label>
               <select 
+                id="workspace-select"
                 value={activeDocId} 
                 onChange={(e) => setActiveDocId(e.target.value)}
                 className="bg-slate-950 border border-slate-800 rounded-md p-2 text-xs w-full text-slate-200 focus:outline-none focus:border-[#8b78d9]"
@@ -614,6 +621,7 @@ export default function WorkspacePage() {
                 <div className="flex items-center gap-2 text-xs bg-slate-950 px-2 py-1 rounded border border-slate-800">
                   <button 
                     disabled={activePage === 1}
+                    aria-label="Previous page"
                     onClick={() => {
                       const prev = activePage - 1;
                       setActivePage(prev);
@@ -626,6 +634,7 @@ export default function WorkspacePage() {
                   <span className="font-medium text-slate-300">{activePage} / {totalPages}</span>
                   <button 
                     disabled={activePage === totalPages}
+                    aria-label="Next page"
                     onClick={() => {
                       const next = activePage + 1;
                       setActivePage(next);
@@ -879,20 +888,23 @@ export default function WorkspacePage() {
             {/* Messages box */}
             <div className="flex-1 bg-slate-950/75 border border-slate-800 rounded-lg p-3 overflow-y-auto flex flex-col gap-3 min-h-[150px]">
               {chatHistory.length > 0 ? (
-                chatHistory.map((msg, idx) => (
-                  <div key={idx} className="flex flex-col gap-1">
-                    {/* User */}
-                    <div className="bg-slate-900 p-2 rounded-lg max-w-[85%] self-start text-xs border border-slate-800">
-                      <div className="text-[9px] font-semibold text-slate-500 uppercase mb-0.5">Student</div>
-                      <div className="text-slate-300 font-medium select-text">{msg[0]}</div>
+                <>
+                  {chatHistory.map((msg, idx) => (
+                    <div key={idx} className="flex flex-col gap-1">
+                      {/* User */}
+                      <div className="bg-slate-900 p-2 rounded-lg max-w-[85%] self-start text-xs border border-slate-800">
+                        <div className="text-[9px] font-semibold text-slate-500 uppercase mb-0.5">Student</div>
+                        <div className="text-slate-300 font-medium select-text">{msg[0]}</div>
+                      </div>
+                      {/* AI */}
+                      <div className="bg-[#8b78d9]/10 p-2 rounded-lg max-w-[85%] self-end text-xs border border-[#8b78d9]/20">
+                        <div className="text-[9px] font-semibold text-[#8b78d9] uppercase mb-0.5">Assistant</div>
+                        <div className="text-slate-200 select-text leading-relaxed whitespace-pre-wrap">{msg[1]}</div>
+                      </div>
                     </div>
-                    {/* AI */}
-                    <div className="bg-[#8b78d9]/10 p-2 rounded-lg max-w-[85%] self-end text-xs border border-[#8b78d9]/20">
-                      <div className="text-[9px] font-semibold text-[#8b78d9] uppercase mb-0.5">Assistant</div>
-                      <div className="text-slate-200 select-text leading-relaxed whitespace-pre-wrap">{msg[1]}</div>
-                    </div>
-                  </div>
-                ))
+                  ))}
+                  <div ref={chatEndRef} />
+                </>
               ) : (
                 <div className="my-auto text-center text-slate-500 text-xs italic">
                   Ask a question about the document text or company policies here.
@@ -902,8 +914,10 @@ export default function WorkspacePage() {
             
             {/* Input Row */}
             <div className="mt-3 flex flex-col gap-2">
+              <label htmlFor="chat-query-input" className="sr-only">Ask a question about the document</label>
               <div className="flex gap-2">
                 <input 
+                  id="chat-query-input"
                   type="text"
                   placeholder="Ask a question..."
                   value={chatInput}
@@ -914,6 +928,7 @@ export default function WorkspacePage() {
                 <button 
                   onClick={handleSendChat}
                   disabled={!chatInput.trim() || isChatting}
+                  aria-label="Send message"
                   className="bg-[#8b78d9] hover:bg-[#7a67cb] text-slate-950 p-2 rounded-md transition shrink-0 disabled:opacity-40"
                 >
                   <Send size={14} />
@@ -925,8 +940,20 @@ export default function WorkspacePage() {
                 {lastTraceId && (
                   <div className="flex gap-1.5 items-center">
                     <span>Helpful?</span>
-                    <button onClick={() => handleFeedback("up")} className="hover:text-[#4fae84]"><ThumbsUp size={11} /></button>
-                    <button onClick={() => handleFeedback("down")} className="hover:text-red-400"><ThumbsDown size={11} /></button>
+                    <button
+                      onClick={() => handleFeedback("up")}
+                      aria-label="Helpful"
+                      className="hover:text-[#4fae84]"
+                    >
+                      <ThumbsUp size={11} />
+                    </button>
+                    <button
+                      onClick={() => handleFeedback("down")}
+                      aria-label="Not helpful"
+                      className="hover:text-red-400"
+                    >
+                      <ThumbsDown size={11} />
+                    </button>
                   </div>
                 )}
               </div>
