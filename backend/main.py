@@ -376,7 +376,7 @@ def run_agent_chat(payload: ChatRequest):
         })
         if res.get("status") == "error":
             raise HTTPException(status_code=500, detail=res.get("message"))
-            
+
         ai_reply = res["ai_reply"]
         route_taken = res["route_taken"]
         

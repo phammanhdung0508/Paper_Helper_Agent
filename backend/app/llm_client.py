@@ -388,7 +388,7 @@ class LocalRuleClient(BaseLLMClient):
             # Basic keyword routing matching main.py regex router
             query_lower = query.lower().strip()
             rag_keywords = [
-                "policy", "travel", "allowance", "hybrid", "schedule", "equipment", 
+                "policy", "travel", "allowance", "hybrid", "schedule", "equipment",
                 "macbook", "laptop", "refresh", "reimburse", "meals", "office", "work"
             ]
             is_rag = any(kw in query_lower for kw in rag_keywords)

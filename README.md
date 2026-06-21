@@ -18,7 +18,7 @@ graph TD
     
     Supervisor -- "Orchestrates & Routes" --> Agents
     Supervisor -- "Queries / Logs" --> LLMRouter[LLM Router Client]
-    
+
     subgraph LLM Routing Layer
         LLMRouter <--> LLMCache[(SQLite llm_cache)]
         LLMRouter --> LLMLog[(SQLite llm_call_log)]

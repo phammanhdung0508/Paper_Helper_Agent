@@ -22,7 +22,7 @@ from app.llm_client import LLMRouterClient, LLMError
 class SupervisorAgent:
     """
     Central orchestration layer above specialist agents.
-    
+
     Supported actions:
         - "chat"          → routes to RAG or General agent via LangGraph
         - "concept_spot"  → delegates to ConceptGraphAgent
@@ -38,11 +38,11 @@ class SupervisorAgent:
     def route_and_execute(self, action: str, context: Dict[str, Any]) -> Dict[str, Any]:
         """
         Main entry point. Routes the action to the correct specialist agent.
-        
+
         Args:
             action: one of "chat", "concept_spot", "visual_gen", "kg_build", "evaluate", "general"
             context: dict with keys like "query", "doc_id", "concept_id", etc.
-            
+
         Returns:
             dict with the result from the specialist agent
         """
@@ -135,17 +135,17 @@ class SupervisorAgent:
     def _handle_chat(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Delegates to the LangGraph workflow (graph.py)."""
         from app.graph import graph as langgraph_workflow
-        
+
         inputs = {
             "messages": context.get("messages", []),
             "current_doc_id": context.get("current_doc_id", "")
         }
         config_dict = context.get("config_dict", {})
-        
+
         response = langgraph_workflow.invoke(inputs, config_dict)
         ai_reply = response["messages"][-1].content
         route_taken = response.get("route", "unknown")
-        
+
         return {
             "status": "success",
             "ai_reply": ai_reply,
@@ -162,7 +162,7 @@ class SupervisorAgent:
         from app.agents import MasteryEvaluatorAgent
         concept_label = context.get("concept_label", "")
         concept_explanation = context.get("concept_explanation", "")
-        
+
         question = MasteryEvaluatorAgent.generate_quiz_question(
             concept_label, concept_explanation, llm_client=self.llm_client
         )

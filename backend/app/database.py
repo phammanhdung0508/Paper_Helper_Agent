@@ -139,7 +139,7 @@ def db_init():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
-    
+
     # Create LLM call log table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS llm_call_log (
@@ -153,7 +153,7 @@ def db_init():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
-    
+
     conn.commit()
     conn.close()
 
