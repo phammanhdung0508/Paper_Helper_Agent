@@ -222,6 +222,7 @@ export default function ChatView({ docId }: Props) {
                   onClick={() => deleteChat(c.id)}
                   className="invisible h-5 w-5 shrink-0 rounded text-[var(--ink-400)] hover:bg-[var(--surface-sunken)] hover:text-rose-600 group-hover:visible"
                   title="Delete chat"
+                  aria-label="Delete chat"
                 >
                   <Trash2 className="m-auto h-3 w-3" />
                 </button>
@@ -277,6 +278,7 @@ export default function ChatView({ docId }: Props) {
                 }
               }}
               placeholder="Ask a question about this document…"
+              aria-label="Ask a question about this document"
               rows={2}
               className="min-h-[44px] flex-1 resize-none rounded-md border border-[var(--border-subtle)] bg-[var(--surface-raised)] px-3 py-2 text-[13px] leading-relaxed text-[var(--ink-900)] focus:border-[var(--accent-500)] focus:outline-none"
               disabled={sending}
@@ -286,6 +288,7 @@ export default function ChatView({ docId }: Props) {
               disabled={sending || !draft.trim()}
               className="flex h-[44px] w-[44px] items-center justify-center rounded-md bg-[var(--ink-900)] text-white hover:bg-black disabled:opacity-40"
               title="Send (Enter)"
+              aria-label="Send (Enter)"
             >
               <Send className="h-4 w-4" />
             </button>
