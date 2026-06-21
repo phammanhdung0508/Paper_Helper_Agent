@@ -1,3 +1,4 @@
+import json
 from typing import List, Dict, Any, Optional, Literal, Tuple
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
@@ -5,7 +6,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from app import config
 from app import database
-from app.llm_client import CodexCliClient, LLMRouterClient, BaseLLMClient, run_async
+from app.llm_client import CodexCliClient, run_async
 
 # Define schemas for structured outputs
 class ConceptNode(BaseModel):
@@ -71,13 +72,13 @@ class MasteryAssessment(BaseModel):
 # Agent 1: Knowledge Graph Builder Agent
 class ConceptGraphAgent:
     @staticmethod
-    def build_graph(doc_id: str, document_text: str, llm_client: BaseLLMClient = None) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    def build_graph(doc_id: str, document_text: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """Extracts 6-25 concepts and relationship edges from the document text."""
-        if not config.OPENAI_API_KEY and not config.GEMINI_API_KEY:
+        if not config.OPENAI_API_KEY:
             return ConceptGraphAgent._mock_graph(doc_id)
             
         try:
-            client = llm_client or LLMRouterClient()
+            client = CodexCliClient()
             
             # Since document text can be long, we take a slice of the text
             # representing the first 15000 characters and last 10000 characters.
@@ -132,8 +133,8 @@ class ConceptGraphAgent:
 
     @staticmethod
     def _mock_graph(doc_id: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-        """Generates high-quality mock graphs for offline usage."""
-        # Check if the doc_id has mock concepts or just give standard
+        """Generates high-quality mock graphs for course labs."""
+        # Check if the doc_id belongs to Lab 3 or Lab 4 based on metadata or just give standard
         nodes = [
             {"doc_id": doc_id, "label": "LangGraph", "explanation": "A library for building stateful, multi-actor applications with LLMs using graph structures.", "page_number": 3},
             {"doc_id": doc_id, "label": "State Management", "explanation": "A shared, structured data object passed between nodes that stores messages and variables.", "page_number": 3},
@@ -141,6 +142,7 @@ class ConceptGraphAgent:
             {"doc_id": doc_id, "label": "RAG Agent", "explanation": "An agent that retrieves context from a vector store to generate precise, grounded answers.", "page_number": 5},
             {"doc_id": doc_id, "label": "Vector Store", "explanation": "A database for storing high-dimensional vector embeddings of text chunks for similarity matching.", "page_number": 4},
             {"doc_id": doc_id, "label": "Chroma DB", "explanation": "A local embedded vector database used in LangChain for fast similarity search.", "page_number": 4},
+            {"doc_id": doc_id, "label": "Gradio UI", "explanation": "A python library for building customizable web interfaces for machine learning models.", "page_number": 6},
             {"doc_id": doc_id, "label": "Langfuse", "explanation": "An open-source LLM engineering platform for self-hosted observability, tracing, and feedback evaluation.", "page_number": 2}
         ]
         
@@ -152,6 +154,7 @@ class ConceptGraphAgent:
             {"doc_id": doc_id, "source": f"{doc_id}_concept_router_node", "target": f"{doc_id}_concept_rag_agent", "type": "causal", "description": "Router Node triggers the RAG Agent if corporate queries are identified."},
             {"doc_id": doc_id, "source": f"{doc_id}_concept_rag_agent", "target": f"{doc_id}_concept_vector_store", "type": "composition", "description": "RAG Agent relies on Vector Store to fetch grounded context."},
             {"doc_id": doc_id, "source": f"{doc_id}_concept_vector_store", "target": f"{doc_id}_concept_chroma_db", "type": "specialisation", "description": "Chroma DB is a concrete embedded implementation of a Vector Store."},
+            {"doc_id": doc_id, "source": f"{doc_id}_concept_langgraph", "target": f"{doc_id}_concept_gradio_ui", "type": "parallel", "description": "Gradio UI wraps the compiled LangGraph workflow in an interactive web application."},
             {"doc_id": doc_id, "source": f"{doc_id}_concept_langgraph", "target": f"{doc_id}_concept_langfuse", "type": "parallel", "description": "Langfuse instruments LangGraph nodes and traces executions in production."}
         ]
         return nodes, edges
@@ -159,13 +162,13 @@ class ConceptGraphAgent:
 # Agent 2: Visualization Planner Agent
 class VisualSandboxAgent:
     @staticmethod
-    def generate_spec(doc_id: str, concept_id: str, concept_label: str, concept_explanation: str, llm_client: BaseLLMClient = None) -> Dict[str, Any]:
+    def generate_spec(doc_id: str, concept_id: str, concept_label: str, concept_explanation: str) -> Dict[str, Any]:
         """Plans and generates a structured spec for a concept."""
-        if not config.OPENAI_API_KEY and not config.GEMINI_API_KEY:
+        if not config.OPENAI_API_KEY:
             return VisualSandboxAgent._mock_spec(doc_id, concept_id, concept_label)
             
         try:
-            client = llm_client or LLMRouterClient()
+            client = CodexCliClient()
             
             prompt = (
                 f"You are a visual education designer. Generate a visualization specification for this concept:\n"
@@ -290,41 +293,36 @@ class VisualSandboxAgent:
                 }
             }
 
-class QuizQuestion(BaseModel):
-    question: str = Field(description="A single essay question to evaluate comprehension of the concept.")
-
 # Agent 3: Mastery Evaluator Agent
 class MasteryEvaluatorAgent:
     @staticmethod
-    def generate_quiz_question(concept_label: str, explanation: str, llm_client: BaseLLMClient = None) -> str:
+    def generate_quiz_question(concept_label: str, explanation: str) -> str:
         """Generates a study question to evaluate the user's comprehension of the concept."""
-        if not config.OPENAI_API_KEY and not config.GEMINI_API_KEY:
+        if not config.OPENAI_API_KEY:
             return f"Explain the core concept of '{concept_label}' and list two main features or details of it."
             
         try:
-            client = llm_client or LLMRouterClient()
+            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7, openai_api_key=config.OPENAI_API_KEY)
             prompt = (
                 f"You are an academic examiner. Generate one short, challenging essay question to evaluate a student's comprehension of the following concept:\n"
                 f"Concept: {concept_label}\n"
                 f"Definition: {explanation}\n\n"
                 "The question should require the student to explain the concept in their own words or apply it to a scenario. Do not make it multiple choice."
             )
-            result = run_async(client.run_json(
-                task="evaluate_mastery_response",
-                prompt=f"System Prompt:\nYou generate assessment questions for study concepts.\n\nPrompt:\n{prompt}",
-                schema=QuizQuestion
-            ))
-            return result.question
-        except Exception as e:
-            print(f"Error generating quiz question: {e}")
+            response = llm.invoke([
+                SystemMessage(content="You generate assessment questions for study concepts."),
+                HumanMessage(content=prompt)
+            ])
+            return response.content
+        except Exception:
             return f"Explain the core concept of '{concept_label}' and list two main features or details of it."
 
     @staticmethod
-    def evaluate_response(concept_label: str, explanation: str, question: str, student_answer: str, current_scores: Dict[str, int], llm_client: BaseLLMClient = None) -> Dict[str, Any]:
+    def evaluate_response(concept_label: str, explanation: str, question: str, student_answer: str, current_scores: Dict[str, int]) -> Dict[str, Any]:
         """Evaluates student's written response and calculates updated four-axis mastery scores with monotone clamping."""
         prev = current_scores
         
-        if not config.OPENAI_API_KEY and not config.GEMINI_API_KEY:
+        if not config.OPENAI_API_KEY:
             # Default increment offline
             new_scores = {
                 "memory": min(100, prev.get("memory", 0) + 20),
@@ -340,7 +338,7 @@ class MasteryEvaluatorAgent:
             }
             
         try:
-            client = llm_client or LLMRouterClient()
+            client = CodexCliClient()
             
             prompt = (
                 f"Evaluate the student's mastery of the concept '{concept_label}'.\n"

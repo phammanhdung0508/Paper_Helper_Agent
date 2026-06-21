@@ -1,10 +1,7 @@
 import json
-import logging
 import os
 from typing import List, Dict, Any
 from app.agents import MasteryEvaluatorAgent
-
-logger = logging.getLogger(__name__)
 
 # Load local vis-network js content if available for offline usage, otherwise fallback to CDN
 _dir = os.path.dirname(os.path.abspath(__file__))
@@ -13,8 +10,7 @@ if os.path.exists(_local_js_path):
     try:
         with open(_local_js_path, "r", encoding="utf-8") as _f:
             _vis_js_content = f"<script type='text/javascript'>\n{_f.read()}\n</script>"
-    except (FileNotFoundError, IOError) as e:
-        logger.warning(f"Failed to read local vis-network.min.js: {e}. Falling back to CDN.")
+    except Exception:
         _vis_js_content = '<script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>'
 else:
     _vis_js_content = '<script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>'
@@ -25,8 +21,7 @@ if os.path.exists(_local_three_path):
     try:
         with open(_local_three_path, "r", encoding="utf-8") as _f:
             _three_js_content = f"<script type='text/javascript'>\n{_f.read()}\n</script>"
-    except (FileNotFoundError, IOError) as e:
-        logger.warning(f"Failed to read local three.min.js: {e}. Falling back to CDN.")
+    except Exception:
         _three_js_content = '<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>'
 else:
     _three_js_content = '<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>'
@@ -244,7 +239,7 @@ def generate_vis_html(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]], 
             
             var network = new vis.Network(container, data, options);
             
-            // Send selected node ID to Next.js parent via window message
+            // Send selected node ID to Gradio via window message
             network.on("selectNode", function (params) {{
                 if (params.nodes.length > 0) {{
                     var nodeId = params.nodes[0];

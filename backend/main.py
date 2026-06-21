@@ -20,7 +20,7 @@ _project_root = os.path.dirname(_backend_dir)
 database.db_init()
 
 def initialize_default_policies():
-    """Ensures that the default company policies are loaded."""
+    """Ensures that the default company policies are loaded for Lab 3 compatibility."""
     docs = database.get_documents()
     has_policies = any(d["id"] == "company_policies" for d in docs)
     
@@ -81,14 +81,11 @@ def initialize_default_policies():
         else:
             print("Warning: data/company_policies.txt not found. Skip default initialization.")
 
-from contextlib import asynccontextmanager
+app = FastAPI(title="Paper Helper API Server", version="1.0.0")
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+@app.on_event("startup")
+def startup_event():
     initialize_default_policies()
-    yield
-
-app = FastAPI(title="Paper Helper API Server", version="1.0.0", lifespan=lifespan)
 
 # CORS middleware for local frontend development
 app.add_middleware(
@@ -173,7 +170,7 @@ def list_documents():
     # Default corporate policies fallback
     choices = [{"name": d["name"], "id": d["id"]} for d in docs]
     if not choices:
-        choices = [{"name": "Default Company Policies", "id": "company_policies"}]
+        choices = [{"name": "Lab 3 Company Policies", "id": "company_policies"}]
     return choices
 
 @app.post("/api/documents/upload")
@@ -229,18 +226,16 @@ def get_concepts_graph(doc_id: str):
     if not db_nodes and doc_id != "company_policies":
         pages = database.get_document_pages(doc_id)
         if pages:
-            from app.supervisor import supervisor
-            res = supervisor.route_and_execute("concept_spot", {"doc_id": doc_id})
-            if res.get("status") == "error":
-                raise HTTPException(status_code=500, detail=res.get("message"))
-            for n in res.get("nodes", []):
+            total_text = "\n".join([p["text"] for p in pages])
+            db_nodes, db_edges = ConceptGraphAgent.build_graph(doc_id, total_text)
+            database.save_concepts(db_nodes)
+            database.save_concept_edges(db_edges)
+
+            for n in db_nodes:
                 c_id = f"{doc_id}_concept_{n['label'].lower().replace(' ', '_')}"
-                supervisor.route_and_execute("visual_gen", {
-                    "doc_id": doc_id,
-                    "concept_id": c_id,
-                    "concept_label": n["label"],
-                    "concept_explanation": n["explanation"]
-                })
+                spec = VisualSandboxAgent.generate_spec(doc_id, c_id, n['label'], n['explanation'])
+                database.save_visual_specs([spec])
+
             db_nodes = database.get_concepts(doc_id)
             db_edges = database.get_concept_edges(doc_id)
             
@@ -255,18 +250,16 @@ def get_graph_html(doc_id: str, selected_id: str = None):
     if not db_nodes and doc_id != "company_policies":
         pages = database.get_document_pages(doc_id)
         if pages:
-            from app.supervisor import supervisor
-            res = supervisor.route_and_execute("concept_spot", {"doc_id": doc_id})
-            if res.get("status") == "error":
-                raise HTTPException(status_code=500, detail=res.get("message"))
-            for n in res.get("nodes", []):
+            total_text = "\n".join([p["text"] for p in pages])
+            db_nodes, db_edges = ConceptGraphAgent.build_graph(doc_id, total_text)
+            database.save_concepts(db_nodes)
+            database.save_concept_edges(db_edges)
+
+            for n in db_nodes:
                 c_id = f"{doc_id}_concept_{n['label'].lower().replace(' ', '_')}"
-                supervisor.route_and_execute("visual_gen", {
-                    "doc_id": doc_id,
-                    "concept_id": c_id,
-                    "concept_label": n["label"],
-                    "concept_explanation": n["explanation"]
-                })
+                spec = VisualSandboxAgent.generate_spec(doc_id, c_id, n['label'], n['explanation'])
+                database.save_visual_specs([spec])
+
             db_nodes = database.get_concepts(doc_id)
             db_edges = database.get_concept_edges(doc_id)
             
@@ -284,16 +277,8 @@ def get_visual_spec(doc_id: str, concept_id: str):
         row = cursor.fetchone()
         conn.close()
         if row:
-            from app.supervisor import supervisor
-            res = supervisor.route_and_execute("visual_gen", {
-                "doc_id": doc_id,
-                "concept_id": concept_id,
-                "concept_label": row["label"],
-                "concept_explanation": row["explanation"]
-            })
-            if res.get("status") == "error":
-                raise HTTPException(status_code=500, detail=res.get("message"))
-            spec = res.get("spec")
+            spec = VisualSandboxAgent.generate_spec(doc_id, concept_id, row["label"], row["explanation"])
+            database.save_visual_specs([spec])
         else:
             raise HTTPException(status_code=404, detail="Concept not found")
             
@@ -309,16 +294,8 @@ def get_visual_spec_three_html(doc_id: str, concept_id: str):
         row = cursor.fetchone()
         conn.close()
         if row:
-            from app.supervisor import supervisor
-            res = supervisor.route_and_execute("visual_gen", {
-                "doc_id": doc_id,
-                "concept_id": concept_id,
-                "concept_label": row["label"],
-                "concept_explanation": row["explanation"]
-            })
-            if res.get("status") == "error":
-                raise HTTPException(status_code=500, detail=res.get("message"))
-            spec = res.get("spec")
+            spec = VisualSandboxAgent.generate_spec(doc_id, concept_id, row["label"], row["explanation"])
+            database.save_visual_specs([spec])
         else:
             raise HTTPException(status_code=404, detail="Concept not found")
             
@@ -367,18 +344,15 @@ def run_agent_chat(payload: ChatRequest):
     if callbacks:
         config_dict["callbacks"] = callbacks
         
-    try:
-        from app.supervisor import supervisor
-        res = supervisor.route_and_execute("chat", {
-            "messages": messages,
-            "current_doc_id": doc_id,
-            "config_dict": config_dict
-        })
-        if res.get("status") == "error":
-            raise HTTPException(status_code=500, detail=res.get("message"))
+    inputs = {
+        "messages": messages,
+        "current_doc_id": doc_id
+    }
 
-        ai_reply = res["ai_reply"]
-        route_taken = res["route_taken"]
+    try:
+        response = graph.graph.invoke(inputs, config_dict)
+        ai_reply = response["messages"][-1].content
+        route_taken = response.get("route", "unknown")
         
         database.add_chat_message(session_id, "user", query, trace_id)
         database.add_chat_message(session_id, "assistant", ai_reply, trace_id)
@@ -442,14 +416,8 @@ def generate_quiz(payload: QuizRequest):
     if not row:
         raise HTTPException(status_code=404, detail="Concept not found")
         
-    from app.supervisor import supervisor
-    res = supervisor.route_and_execute("quiz_gen", {
-        "concept_label": row["label"],
-        "concept_explanation": row["explanation"]
-    })
-    if res.get("status") == "error":
-        raise HTTPException(status_code=500, detail=res.get("message"))
-    return QuizResponse(question=res.get("question", ""))
+    question = MasteryEvaluatorAgent.generate_quiz_question(row["label"], row["explanation"])
+    return QuizResponse(question=question)
 
 @app.post("/api/evaluation/submit", response_model=QuizSubmitResponse)
 def submit_answer(payload: QuizSubmitRequest):
@@ -470,17 +438,9 @@ def submit_answer(payload: QuizSubmitRequest):
         "application": concept["application"]
     }
     
-    from app.supervisor import supervisor
-    res = supervisor.route_and_execute("evaluate", {
-        "concept_label": concept["label"],
-        "concept_explanation": concept["explanation"],
-        "question": payload.question,
-        "student_answer": payload.answer,
-        "current_scores": prev_scores
-    })
-    if res.get("status") == "error":
-        raise HTTPException(status_code=500, detail=res.get("message"))
-    result = res
+    result = MasteryEvaluatorAgent.evaluate_response(
+        concept["label"], concept["explanation"], payload.question, payload.answer, prev_scores
+    )
     
     database.update_concept_mastery(payload.concept_id, result["scores"])
     database.add_evaluation_journal(

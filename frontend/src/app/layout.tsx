@@ -1,11 +1,21 @@
 import type { Metadata } from "next";
+import localFont from "next/font/local";
 import "./globals.css";
-import CodexHealthBanner from "@/components/CodexHealthBanner";
+
+const geistSans = localFont({
+  src: "./fonts/GeistVF.woff",
+  variable: "--font-geist-sans",
+  weight: "100 900",
+});
+const geistMono = localFont({
+  src: "./fonts/GeistMonoVF.woff",
+  variable: "--font-geist-mono",
+  weight: "100 900",
+});
 
 export const metadata: Metadata = {
-  title: "Get It.",
-  description:
-    "Drop in any tagged PDF. Get It.'s agents pick the concepts that benefit from a picture and render them in 3D, animation, formulas, graphs, or live sources right next to the text — and back-reflect your mastery onto a knowledge graph.",
+  title: "Paper Helper & Visual Study Companion",
+  description: "Interactive study network graph, visual sandbox, and scoped PDF chat tutor.",
 };
 
 export default function RootLayout({
@@ -14,12 +24,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className="h-full antialiased"
-    >
-      <body className="h-full flex flex-col overflow-hidden bg-[var(--surface-canvas)] text-[var(--ink-900)]">
-        <CodexHealthBanner />
+    <html lang="en">
+      <body
+        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+      >
         {children}
       </body>
     </html>

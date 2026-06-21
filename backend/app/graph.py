@@ -8,7 +8,7 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from app import config
 from app import database
-from app.llm_client import LLMRouterClient, run_async
+from app.llm_client import CodexCliClient, run_async
 
 _app_dir = os.path.dirname(os.path.abspath(__file__))
 _project_root = os.path.dirname(os.path.dirname(_app_dir))
@@ -77,7 +77,7 @@ def router_node(state: AgentState) -> Dict[str, Any]:
         return {"route": route, "context": []}
         
     try:
-        client = LLMRouterClient()
+        client = CodexCliClient()
         
         # We prompt the router
         system_prompt = (
@@ -106,7 +106,7 @@ def general_agent_node(state: AgentState) -> Dict[str, Any]:
         return {"messages": [AIMessage(content=reply)]}
         
     try:
-        client = LLMRouterClient()
+        client = CodexCliClient()
         system_prompt = (
             "You are a friendly, helpful general corporate assistant. Answer the user's questions clearly. "
             "Keep the responses engaging, professional, and concise."
@@ -144,7 +144,7 @@ def rag_agent_node(state: AgentState) -> Dict[str, Any]:
     
     doc_id = state.current_doc_id
     if not doc_id:
-        # Check if there is a company policies collection
+        # Check if there is a company policies collection (Lab 3 requirement)
         doc_id = "company_policies"
         
     # Retrieve context
@@ -181,7 +181,7 @@ def rag_agent_node(state: AgentState) -> Dict[str, Any]:
         return {"messages": [AIMessage(content=reply)], "context": context_chunks}
         
     try:
-        client = LLMRouterClient()
+        client = CodexCliClient()
         system_prompt = (
             "You are a strict Retrieval-Augmented Generation (RAG) assistant. "
             "Your task is to answer the user query ONLY using the provided retrieved context. "
