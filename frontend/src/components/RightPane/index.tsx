@@ -32,6 +32,7 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 
 import type { VizSpec } from "@/lib/schemas";
+import TooltipChip from "@/components/TooltipChip";
 import ThreeDView from "@/components/Visualizer/ThreeDView";
 import TwoDAnimView from "@/components/Visualizer/TwoDAnimView";
 import TwoDTextView from "@/components/Visualizer/TwoDTextView";
@@ -345,14 +346,16 @@ function Header({
         <p className="truncate text-[13.5px] font-medium text-[var(--ink-900)]">{subtitle}</p>
       </div>
       <div ref={moreRef} className="relative">
-        <button
-          type="button"
-          onClick={() => setMoreOpen((v) => !v)}
-          className="tab-icon-btn"
-          aria-label="More actions"
-        >
-          <MoreHorizontal className="h-4 w-4" />
-        </button>
+        <TooltipChip tip="More actions">
+          <button
+            type="button"
+            onClick={() => setMoreOpen((v) => !v)}
+            className="tab-icon-btn"
+            aria-label="More actions"
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </button>
+        </TooltipChip>
         <AnimatePresence>
           {moreOpen && (
             <motion.div
