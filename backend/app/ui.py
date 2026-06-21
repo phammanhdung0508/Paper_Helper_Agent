@@ -3,6 +3,7 @@ import os
 from typing import Dict, Any, List, Tuple
 import uuid
 import json
+import html
 import plotly.graph_objects as go
 from langchain_core.messages import HumanMessage, AIMessage
 from langfuse import Langfuse
@@ -88,10 +89,13 @@ def get_concept_details_html(concept: Dict[str, Any]) -> str:
     unified_score = MasteryEvaluatorAgent.calculate_unified_score(scores)
     color = visualizer.get_color_for_score(unified_score)
     
-    html = f"""
+    safe_label = html.escape(str(concept.get('label', '')))
+    safe_explanation = html.escape(str(concept.get('explanation', '')))
+
+    html_content = f"""
     <div style="padding: 10px;">
-        <h2 style="margin-top: 0; font-size: 20px; font-weight: 600; color: #f8fafc; border-bottom: 1px solid #1e293b; padding-bottom: 10px;">{concept['label']}</h2>
-        <p style="font-size: 13px; color: #94a3b8; line-height: 1.5; margin-bottom: 15px;">{concept['explanation']}</p>
+        <h2 style="margin-top: 0; font-size: 20px; font-weight: 600; color: #f8fafc; border-bottom: 1px solid #1e293b; padding-bottom: 10px;">{safe_label}</h2>
+        <p style="font-size: 13px; color: #94a3b8; line-height: 1.5; margin-bottom: 15px;">{safe_explanation}</p>
         
         <div style="background: rgba(30, 41, 59, 0.4); border-radius: 8px; padding: 12px; border: 1px solid #1e293b; margin-bottom: 18px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
@@ -108,7 +112,7 @@ def get_concept_details_html(concept: Dict[str, Any]) -> str:
         {make_progress_bar("Practical Application", scores['application'], "#16a06d")}
     </div>
     """
-    return html
+    return html_content
 
 def build_visual_spec_display(spec: Dict[str, Any]):
     if not spec:
