@@ -363,11 +363,17 @@ def save_concept_edges(edges: List[Dict[str, Any]]):
     """
     conn = get_db_connection()
     cursor = conn.cursor()
-    for e in edges:
-        cursor.execute("""
-        INSERT OR REPLACE INTO concept_edges (source, target, doc_id, type, description)
-        VALUES (?, ?, ?, ?, ?)
-        """, (e['source'], e['target'], e['doc_id'], e['type'], e.get('description', '')))
+
+    edge_tuples = [
+        (e['source'], e['target'], e['doc_id'], e['type'], e.get('description', ''))
+        for e in edges
+    ]
+
+    cursor.executemany("""
+    INSERT OR REPLACE INTO concept_edges (source, target, doc_id, type, description)
+    VALUES (?, ?, ?, ?, ?)
+    """, edge_tuples)
+
     conn.commit()
     conn.close()
 
