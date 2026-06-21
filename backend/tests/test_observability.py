@@ -1,8 +1,7 @@
 import pytest
 import uuid
-from fastapi import HTTPException
 from app import config
-from main import log_chat_feedback, run_agent_chat, FeedbackRequest, ChatRequest
+from app.ui import handle_feedback
 from app.agents import MasteryEvaluatorAgent
 
 def test_trace_uuid_format():
@@ -13,19 +12,14 @@ def test_trace_uuid_format():
     assert str(parsed_uuid) == trace_id
 
 def test_feedback_graceful_empty_trace():
-    """Verify feedback logging raises 400 HTTPException when trace_id is empty."""
-    req = FeedbackRequest(rating="up", trace_id="")
-    with pytest.raises(HTTPException) as exc_info:
-        log_chat_feedback(req)
-    assert exc_info.value.status_code == 400
-    assert "trace_id is required" in exc_info.value.detail
+    """Verify feedback logging returns a graceful error when trace_id is empty."""
+    res = handle_feedback("up", "")
+    assert "Error" in res or "Offline" in res
 
 def test_feedback_graceful_none_trace():
-    # Since FeedbackRequest requires trace_id as string, none or empty string both behave similarly.
-    req = FeedbackRequest(rating="down", trace_id="")
-    with pytest.raises(HTTPException) as exc_info:
-        log_chat_feedback(req)
-    assert exc_info.value.status_code == 400
+    """Verify feedback logging returns a graceful error when trace_id is None."""
+    res = handle_feedback("down", None)
+    assert "Error" in res or "Offline" in res
 
 def test_host_validation_config():
     """Verify that LANGFUSE_HOST is configured and starts with http:// or https://."""
@@ -68,20 +62,20 @@ def test_mastery_monotone_clamp():
     assert clamped["application"] == 80
 
 from unittest.mock import patch, MagicMock
+from app.ui import handle_chat, handle_feedback
 
 def test_feedback_success_mocked():
     """Verify that feedback is successfully logged when trace_id and credentials are present."""
-    with patch("main.config") as mock_config:
+    with patch("app.ui.config") as mock_config:
         mock_config.LANGFUSE_PUBLIC_KEY = "pk-mock"
         mock_config.LANGFUSE_SECRET_KEY = "sk-mock"
         mock_config.LANGFUSE_HOST = "http://localhost:3000"
         
-        with patch("langfuse.Langfuse") as mock_langfuse_class:
+        with patch("app.ui.Langfuse") as mock_langfuse_class:
             mock_lf = MagicMock()
             mock_langfuse_class.return_value = mock_lf
             
-            req = FeedbackRequest(rating="up", trace_id="valid-trace-id")
-            res = log_chat_feedback(req)
+            res = handle_feedback("up", "valid-trace-id")
             
             mock_langfuse_class.assert_called_once_with(
                 public_key="pk-mock",
@@ -93,40 +87,40 @@ def test_feedback_success_mocked():
                 name="helpfulness",
                 value=1.0
             )
-            assert "Feedback logged successfully" in res.status
+            assert "Feedback logged successfully" in res
 
 def test_chat_trace_callback_generation():
     """Verify that CallbackHandler is initialized and updated during chat when keys are configured."""
-    with patch("main.config") as mock_config, \
-         patch("app.supervisor.supervisor") as mock_supervisor, \
-         patch("main.database.add_chat_message") as mock_add_msg, \
+    with patch("app.ui.config") as mock_config, \
+         patch("app.ui.graph.graph") as mock_graph, \
+         patch("app.ui.database.add_chat_message") as mock_add_msg, \
          patch("langfuse.callback.CallbackHandler") as mock_callback_handler, \
-         patch("langfuse.Langfuse") as mock_langfuse_class:
+         patch("app.ui.Langfuse") as mock_langfuse_class:
          
         mock_config.LANGFUSE_PUBLIC_KEY = "pk-mock"
         mock_config.LANGFUSE_SECRET_KEY = "sk-mock"
         mock_config.LANGFUSE_HOST = "http://localhost:3000"
         
-        mock_supervisor.route_and_execute.return_value = {
-            "ai_reply": "Hello AI response",
-            "route_taken": "general"
+        mock_response = {
+            "messages": [MagicMock(content="Hello AI response")],
+            "route": "general"
         }
+        mock_graph.invoke.return_value = mock_response
         
         mock_lf = MagicMock()
         mock_langfuse_class.return_value = mock_lf
         
-        req = ChatRequest(
+        _, _, _, trace_id = handle_chat(
             query="Hello",
             chat_history=[],
             doc_id="doc-123",
             session_id="session-456"
         )
-        res = run_agent_chat(req)
         
         # Verify CallbackHandler was initialized with trace info
         mock_callback_handler.assert_called_once()
         kwargs = mock_callback_handler.call_args[1]
-        assert kwargs["trace_id"] == res.trace_id
+        assert kwargs["trace_id"] == trace_id
         assert kwargs["session_id"] == "session-456"
         assert kwargs["public_key"] == "pk-mock"
         assert kwargs["secret_key"] == "sk-mock"
@@ -137,8 +131,8 @@ def test_chat_trace_callback_generation():
             secret_key="sk-mock",
             host="http://localhost:3000"
         )
-        mock_lf.trace.assert_called_once_with(id=res.trace_id)
-        mock_lf.trace(id=res.trace_id).update.assert_called_once_with(
+        mock_lf.trace.assert_called_once_with(id=trace_id)
+        mock_lf.trace(id=trace_id).update.assert_called_once_with(
             metadata={
                 "session_id": "session-456",
                 "user_id": "default_student_501",
@@ -148,14 +142,11 @@ def test_chat_trace_callback_generation():
 
 def test_host_validation_boundaries():
     """Test boundary checks on host validation errors."""
-    with patch("main.config") as mock_config:
+    with patch("app.ui.config") as mock_config:
         mock_config.LANGFUSE_PUBLIC_KEY = "pk-mock"
         mock_config.LANGFUSE_SECRET_KEY = "sk-mock"
         mock_config.LANGFUSE_HOST = ""
         
-        with patch("langfuse.Langfuse", side_effect=ValueError("Invalid Host URL")):
-            req = FeedbackRequest(rating="up", trace_id="some-trace-id")
-            with pytest.raises(HTTPException) as exc_info:
-                log_chat_feedback(req)
-            assert exc_info.value.status_code == 500
-            assert "Invalid Host URL" in exc_info.value.detail
+        with patch("app.ui.Langfuse", side_effect=ValueError("Invalid Host URL")):
+            res = handle_feedback("up", "some-trace-id")
+            assert "Feedback Failed" in res

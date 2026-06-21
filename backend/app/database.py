@@ -5,16 +5,8 @@ import uuid
 import pypdf
 from typing import List, Dict, Any, Tuple
 import json
-import warnings
 
 from app import config
-
-# Silence LangChainDeprecationWarning
-try:
-    from langchain_core._api import LangChainDeprecationWarning
-    warnings.filterwarnings("ignore", category=LangChainDeprecationWarning)
-except ImportError:
-    pass
 
 # SQLite Helpers
 def get_db_connection():
@@ -132,33 +124,6 @@ def db_init():
     )
     """)
     
-    # Create LLM response cache table
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS llm_cache (
-        id TEXT PRIMARY KEY,
-        task TEXT NOT NULL,
-        prompt_hash TEXT NOT NULL,
-        schema_name TEXT NOT NULL,
-        response_json TEXT NOT NULL,
-        provider TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-    
-    # Create LLM call log table
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS llm_call_log (
-        id TEXT PRIMARY KEY,
-        task TEXT NOT NULL,
-        provider TEXT NOT NULL,
-        success INTEGER NOT NULL,
-        latency_ms INTEGER NOT NULL,
-        error_category TEXT,
-        cache_hit INTEGER DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-    
     conn.commit()
     conn.close()
 
@@ -267,14 +232,12 @@ def ingest_document(file_path: str, custom_name: str = None) -> str:
     )
     
     pages_text = extract_pdf_pages(file_path)
-    page_data = [
-        (f"{doc_id}_page_{i+1}", doc_id, i + 1, page_text)
-        for i, page_text in enumerate(pages_text)
-    ]
-    cursor.executemany(
-        "INSERT INTO pages (id, doc_id, page_number, text) VALUES (?, ?, ?, ?)",
-        page_data
-    )
+    for i, page_text in enumerate(pages_text):
+        page_id = f"{doc_id}_page_{i+1}"
+        cursor.execute(
+            "INSERT INTO pages (id, doc_id, page_number, text) VALUES (?, ?, ?, ?)",
+            (page_id, doc_id, i + 1, page_text)
+        )
         
     conn.commit()
     conn.close()
@@ -488,43 +451,5 @@ def add_evaluation_journal(doc_id: str, concept_id: str, interaction: str, prev_
     INSERT INTO evaluation_journal (id, doc_id, concept_id, interaction, prev_scores, new_scores, reasoning)
     VALUES (?, ?, ?, ?, ?, ?, ?)
     """, (j_id, doc_id, concept_id, interaction, json.dumps(prev_scores), json.dumps(new_scores), reasoning))
-    conn.commit()
-    conn.close()
-
-# LLM Cache CRUD
-def cache_lookup(task: str, prompt_hash: str, schema_name: str):
-    """Returns cached response JSON string if found, else None."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-    SELECT response_json FROM llm_cache
-    WHERE task = ? AND prompt_hash = ? AND schema_name = ?
-    ORDER BY created_at DESC LIMIT 1
-    """, (task, prompt_hash, schema_name))
-    row = cursor.fetchone()
-    conn.close()
-    return row["response_json"] if row else None
-
-def cache_store(task: str, prompt_hash: str, schema_name: str, response_json: str, provider: str):
-    """Stores a successful LLM response in the cache."""
-    cache_id = str(uuid.uuid4())
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-    INSERT OR REPLACE INTO llm_cache (id, task, prompt_hash, schema_name, response_json, provider)
-    VALUES (?, ?, ?, ?, ?, ?)
-    """, (cache_id, task, prompt_hash, schema_name, response_json, provider))
-    conn.commit()
-    conn.close()
-
-def log_llm_call(task: str, provider: str, success: bool, latency_ms: int, error_category: str = None, cache_hit: bool = False):
-    """Logs an LLM provider call for monitoring and analytics."""
-    log_id = str(uuid.uuid4())
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-    INSERT INTO llm_call_log (id, task, provider, success, latency_ms, error_category, cache_hit)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (log_id, task, provider, int(success), latency_ms, error_category, int(cache_hit)))
     conn.commit()
     conn.close()
