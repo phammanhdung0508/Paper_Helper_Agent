@@ -14,20 +14,27 @@ graph TD
     NextJS -- "API Proxy (/api/*)" --> FastAPI[FastAPI Backend Server]
     FastAPI <--> DB[(SQLite Database)]
     FastAPI <--> VectorStore[(Chroma Vector Store)]
-    FastAPI <--> Graph[LangGraph Agent Workflow]
+    FastAPI <--> Supervisor[Supervisor Agent Layer]
     
-    subgraph LangGraph Flow
-        Router{Intent Router}
-        Router -- "general" --> GenAgent[General Chatbot Agent]
-        Router -- "rag" --> RAGAgent[PDF RAG Agent]
-        GenAgent --> End([End])
-        RAGAgent --> End
+    Supervisor -- "Orchestrates & Routes" --> Agents
+    Supervisor -- "Queries / Logs" --> LLMRouter[LLM Router Client]
+    
+    subgraph LLM Routing Layer
+        LLMRouter <--> LLMCache[(SQLite llm_cache)]
+        LLMRouter --> LLMLog[(SQLite llm_call_log)]
+        LLMRouter -- "Provider Fallback" --> LLMProviders
+        subgraph LLMProviders
+            Gemini[GeminiClient - Gemini SDK]
+            Codex[CodexCliClient - Codex CLI]
+            Mock[MockLLMClient - Deterministic Offline]
+        end
     end
     
-    subgraph Agents & Utilities
+    subgraph Agents
         ConceptSpotter[Concept Spotter Agent]
-        VisPlanner[Visualization Planner Agent]
+        VisPlanner[Visual Sandbox Agent]
         MasteryEval[Mastery Evaluator Agent]
+        GraphWorkflow[LangGraph Chat Workflow]
     end
     
     FastAPI --> Langfuse[(Self-Hosted Langfuse DB)]
@@ -78,7 +85,6 @@ Access the dashboard at `http://localhost:3000`, sign up, create API credentials
    ```bash
    python main.py
    ```
-*(Note: If you need to run the legacy Gradio UI server for course compliance, execute `python main_gradio.py` which runs on `http://localhost:7860`).*
 
 ### 3. Frontend Application (Next.js)
 1. Navigate to the frontend directory:
