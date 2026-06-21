@@ -190,7 +190,8 @@ async def upload_document(file: UploadFile = File(...), custom_name: str = Form(
             
         return {"doc_id": doc_id, "name": custom_name or file.filename}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        print(f"Error during API document upload: {e}")
+        raise HTTPException(status_code=400, detail="An error occurred during document ingestion. Please verify the file and try again.")
 
 @app.get("/api/documents/{doc_id}/pages/{page_num}")
 def get_page(doc_id: str, page_num: int):

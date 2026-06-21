@@ -252,7 +252,8 @@ def handle_pdf_upload(file, custom_name):
         choices = [(d["name"], d["id"]) for d in docs]
         return f"Successfully ingested PDF: **{custom_name or os.path.basename(file.name)}**", gr.update(choices=choices, value=doc_id)
     except Exception as e:
-        return f"**Ingestion Error:** {str(e)}", gr.update()
+        print(f"Error during PDF ingestion: {e}")
+        return "**Ingestion Error:** An error occurred during document ingestion. Please verify the file and try again.", gr.update()
 
 def handle_page_slide(doc_id, page_num):
     if not doc_id:
