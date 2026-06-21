@@ -336,15 +336,26 @@ def save_concepts(concepts: List[Dict[str, Any]]):
     """
     conn = get_db_connection()
     cursor = conn.cursor()
-    for c in concepts:
-        concept_id = f"{c['doc_id']}_concept_{c['label'].lower().replace(' ', '_')}"
-        cursor.execute("""
+
+    batch_size = 1000
+    for i in range(0, len(concepts), batch_size):
+        batch = concepts[i:i + batch_size]
+        values = []
+        for c in batch:
+            concept_id = f"{c['doc_id']}_concept_{c['label'].lower().replace(' ', '_')}"
+            values.append((
+                concept_id, c['doc_id'], c['label'], c['explanation'], c['page_number'],
+                concept_id, concept_id, concept_id, concept_id
+            ))
+
+        cursor.executemany("""
         INSERT OR REPLACE INTO concepts (id, doc_id, label, explanation, page_number, memory, comprehension, structure, application)
         VALUES (?, ?, ?, ?, ?, COALESCE((SELECT memory FROM concepts WHERE id=?), 0),
                               COALESCE((SELECT comprehension FROM concepts WHERE id=?), 0),
                               COALESCE((SELECT structure FROM concepts WHERE id=?), 0),
                               COALESCE((SELECT application FROM concepts WHERE id=?), 0))
-        """, (concept_id, c['doc_id'], c['label'], c['explanation'], c['page_number'], concept_id, concept_id, concept_id, concept_id))
+        """, values)
+
     conn.commit()
     conn.close()
 
@@ -364,15 +375,18 @@ def save_concept_edges(edges: List[Dict[str, Any]]):
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    edge_tuples = [
-        (e['source'], e['target'], e['doc_id'], e['type'], e.get('description', ''))
-        for e in edges
-    ]
+    batch_size = 1000
+    for i in range(0, len(edges), batch_size):
+        batch = edges[i:i + batch_size]
+        values = [
+            (e['source'], e['target'], e['doc_id'], e['type'], e.get('description', ''))
+            for e in batch
+        ]
 
-    cursor.executemany("""
-    INSERT OR REPLACE INTO concept_edges (source, target, doc_id, type, description)
-    VALUES (?, ?, ?, ?, ?)
-    """, edge_tuples)
+        cursor.executemany("""
+        INSERT OR REPLACE INTO concept_edges (source, target, doc_id, type, description)
+        VALUES (?, ?, ?, ?, ?)
+        """, values)
 
     conn.commit()
     conn.close()
@@ -404,13 +418,23 @@ def save_visual_specs(specs: List[Dict[str, Any]]):
     """
     conn = get_db_connection()
     cursor = conn.cursor()
-    for s in specs:
-        spec_id = f"{s['doc_id']}_visual_{s['concept_id'].split('_')[-1]}"
-        spec_json_str = s['spec_json'] if isinstance(s['spec_json'], str) else json.dumps(s['spec_json'])
-        cursor.execute("""
+
+    batch_size = 1000
+    for i in range(0, len(specs), batch_size):
+        batch = specs[i:i + batch_size]
+        values = []
+        for s in batch:
+            spec_id = f"{s['doc_id']}_visual_{s['concept_id'].split('_')[-1]}"
+            spec_json_str = s['spec_json'] if isinstance(s['spec_json'], str) else json.dumps(s['spec_json'])
+            values.append((
+                spec_id, s['doc_id'], s['concept_id'], s['type'], s['title'], s['description'], spec_json_str
+            ))
+
+        cursor.executemany("""
         INSERT OR REPLACE INTO visual_specs (id, doc_id, concept_id, type, title, description, spec_json)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (spec_id, s['doc_id'], s['concept_id'], s['type'], s['title'], s['description'], spec_json_str))
+        """, values)
+
     conn.commit()
     conn.close()
 
