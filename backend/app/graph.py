@@ -1,8 +1,7 @@
 import os
 from typing import List, Dict, Any, Literal
 from pydantic import BaseModel, Field
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+from langchain_core.messages import AIMessage
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -112,11 +111,10 @@ def general_agent_node(state: AgentState) -> Dict[str, Any]:
             "Keep the responses engaging, professional, and concise."
         )
         # Format chat history
-        history_text = ""
-        for msg in state.messages[:-1]:
-            sender = "User" if getattr(msg, "type", "") == "human" else "Assistant"
-            content = getattr(msg, "content", str(msg))
-            history_text += f"{sender}: {content}\n"
+        history_text = "".join(
+            f"{'User' if getattr(msg, 'type', '') == 'human' else 'Assistant'}: {getattr(msg, 'content', str(msg))}\n"
+            for msg in state.messages[:-1]
+        )
         
         user_query = state.messages[-1]
         query_content = getattr(user_query, "content", str(user_query))
@@ -192,11 +190,10 @@ def rag_agent_node(state: AgentState) -> Dict[str, Any]:
             f"--- START RETRIEVED CONTEXT ---\n{context_str}\n--- END RETRIEVED CONTEXT ---"
         )
         # Format chat history
-        history_text = ""
-        for msg in state.messages[:-1]:
-            sender = "User" if getattr(msg, "type", "") == "human" else "Assistant"
-            content = getattr(msg, "content", str(msg))
-            history_text += f"{sender}: {content}\n"
+        history_text = "".join(
+            f"{'User' if getattr(msg, 'type', '') == 'human' else 'Assistant'}: {getattr(msg, 'content', str(msg))}\n"
+            for msg in state.messages[:-1]
+        )
             
         user_query = state.messages[-1]
         query_content = getattr(user_query, "content", str(user_query))
