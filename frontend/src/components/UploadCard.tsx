@@ -189,10 +189,16 @@ export default function UploadCard() {
           if (f) startUpload(f);
         }}
         onClick={() => inputRef.current?.click()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            inputRef.current?.click();
+          }
+        }}
         role="button"
         tabIndex={0}
         className={[
-          "mt-9 flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-8 py-9 text-center transition-colors",
+          "mt-9 flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-8 py-9 text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-500)]",
           dragOver
             ? "border-[var(--accent-500)] bg-[var(--accent-50)]"
             : "border-[var(--accent-100)] bg-[var(--accent-50)]/40 hover:border-[var(--accent-500)] hover:bg-[var(--accent-50)]",
@@ -214,6 +220,7 @@ export default function UploadCard() {
             <span
               key={color}
               title={title}
+              aria-label={title}
               className="inline-flex h-9 w-9 items-center justify-center rounded-lg border"
               style={{
                 background: `var(--tag-${color}-bg)`,
