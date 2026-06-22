@@ -2,6 +2,7 @@ import os
 from typing import List, Dict, Any, Literal
 from pydantic import BaseModel, Field
 from langchain_core.messages import AIMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -64,7 +65,7 @@ def local_regex_router(query: str, current_doc_id: str) -> str:
     return "rag" if is_rag else "general"
 
 # Node 1: Router Node
-def router_node(state: AgentState) -> Dict[str, Any]:
+def router_node(state: AgentState, run_config: RunnableConfig = None) -> Dict[str, Any]:
     """Analyzes user query and decides whether to route to RAG or General Chat."""
     last_message = state.messages[-1]
     query = last_message.content if hasattr(last_message, "content") else str(last_message)
@@ -85,10 +86,19 @@ def router_node(state: AgentState) -> Dict[str, Any]:
             "If it is general chit-chat, math, programming, general knowledge, greetings, select 'general'."
         )
         prompt = f"System Prompt:\n{system_prompt}\n\nQuery to route: {query}"
+        
+        trace_id = ""
+        callbacks = None
+        if run_config:
+            trace_id = run_config.get("configurable", {}).get("trace_id", "")
+            callbacks = run_config.get("callbacks", [])
+            
         decision = run_async(client.run_json(
             task="route_query",
             prompt=prompt,
-            schema=RouteDecision
+            schema=RouteDecision,
+            trace_id=trace_id,
+            callbacks=callbacks
         ))
         return {"route": decision.route, "context": []}
     except Exception as e:
@@ -98,7 +108,7 @@ def router_node(state: AgentState) -> Dict[str, Any]:
         return {"route": route, "context": []}
 
 # Node 2: General Chatbot Node
-def general_agent_node(state: AgentState) -> Dict[str, Any]:
+def general_agent_node(state: AgentState, run_config: RunnableConfig = None) -> Dict[str, Any]:
     """Handles general chit-chat and greetings."""
     if not config.OPENAI_API_KEY:
         reply = "Hello! I am the Paper Helper General Assistant, running in offline mode. Please configure your OpenAI API Key in the settings or .env file to enable full chat functionality."
@@ -125,17 +135,25 @@ def general_agent_node(state: AgentState) -> Dict[str, Any]:
             f"User: {query_content}"
         )
         
+        trace_id = ""
+        callbacks = None
+        if run_config:
+            trace_id = run_config.get("configurable", {}).get("trace_id", "")
+            callbacks = run_config.get("callbacks", [])
+            
         llm_reply = run_async(client.run_json(
             task="general_chat",
             prompt=prompt,
-            schema=TextResponse
+            schema=TextResponse,
+            trace_id=trace_id,
+            callbacks=callbacks
         ))
         return {"messages": [AIMessage(content=llm_reply.response)]}
     except Exception as e:
         return {"messages": [AIMessage(content=f"Error in General Agent: {str(e)}")]}
 
 # Node 3: RAG Chatbot Node
-def rag_agent_node(state: AgentState) -> Dict[str, Any]:
+def rag_agent_node(state: AgentState, run_config: RunnableConfig = None) -> Dict[str, Any]:
     """Retrieves document context and answers queries grounded ONLY in the retrieved text."""
     last_message = state.messages[-1]
     query = last_message.content if hasattr(last_message, "content") else str(last_message)
@@ -204,10 +222,18 @@ def rag_agent_node(state: AgentState) -> Dict[str, Any]:
             f"User: {query_content}"
         )
         
+        trace_id = ""
+        callbacks = None
+        if run_config:
+            trace_id = run_config.get("configurable", {}).get("trace_id", "")
+            callbacks = run_config.get("callbacks", [])
+            
         llm_reply = run_async(client.run_json(
             task="rag_chat",
             prompt=prompt,
-            schema=TextResponse
+            schema=TextResponse,
+            trace_id=trace_id,
+            callbacks=callbacks
         ))
         return {"messages": [AIMessage(content=llm_reply.response)], "context": context_chunks}
     except Exception as e:

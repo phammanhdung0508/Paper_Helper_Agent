@@ -363,7 +363,12 @@ def run_agent_chat(payload: ChatRequest):
         except Exception as e:
             print(f"Error loading Langfuse Callback: {e}")
             
-    config_dict = {"configurable": {"thread_id": session_id}}
+    config_dict = {
+        "configurable": {
+            "thread_id": session_id,
+            "trace_id": trace_id
+        }
+    }
     if callbacks:
         config_dict["callbacks"] = callbacks
         

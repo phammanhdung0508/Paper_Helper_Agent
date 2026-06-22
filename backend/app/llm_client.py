@@ -23,7 +23,7 @@ import time
 import hashlib
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Optional, List
+from typing import Optional, List, Any, Dict
 from pydantic import BaseModel
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -61,7 +61,12 @@ class BaseLLMClient(ABC):
 
     @abstractmethod
     async def run_json(
-        self, task: str, prompt: str, schema: type[BaseModel]
+        self,
+        task: str,
+        prompt: str,
+        schema: type[BaseModel],
+        trace_id: str = "",
+        callbacks: Optional[List[Any]] = None,
     ) -> BaseModel:
         """Execute a task/prompt and return a validated Pydantic model."""
         ...
@@ -82,7 +87,28 @@ class CodexCliClient(BaseLLMClient):
         prompt: str,
         schema: type[BaseModel],
         is_retry: bool = False,
+        trace_id: str = "",
+        callbacks: Optional[List[Any]] = None,
     ) -> BaseModel:
+        # Initialize manual Langfuse trace generation if credentials & trace_id exist
+        lf_generation = None
+        if config.LANGFUSE_PUBLIC_KEY and config.LANGFUSE_SECRET_KEY and trace_id:
+            try:
+                from langfuse import Langfuse
+                lf = Langfuse(
+                    public_key=config.LANGFUSE_PUBLIC_KEY,
+                    secret_key=config.LANGFUSE_SECRET_KEY,
+                    host=config.LANGFUSE_HOST
+                )
+                lf_generation = lf.generation(
+                    trace_id=trace_id,
+                    name=f"codex-{task}",
+                    model="codex-cli",
+                    input=prompt,
+                )
+            except Exception as e:
+                print(f"Error starting manual Langfuse generation: {e}")
+
         cmd = ["codex", "run", "--task", task, "--prompt", prompt, "--format", "json"]
 
         try:
@@ -135,26 +161,50 @@ class CodexCliClient(BaseLLMClient):
                         f"Original Prompt:\n{prompt}\n\n"
                         f"Invalid Output:\n{stdout_str}"
                     )
-                    return await self.run_json(task, repair_prompt, schema, is_retry=True)
+                    return await self.run_json(task, repair_prompt, schema, is_retry=True, trace_id=trace_id, callbacks=callbacks)
                 raise LLMError(
                     "invalid_json", f"Failed to parse JSON: {str(je)}"
                 )
 
             try:
+                # Successfully executed
+                if lf_generation:
+                    try:
+                        lf_generation.update(
+                            output=stdout_str,
+                            metadata={"status": "success"}
+                        )
+                    except Exception:
+                        pass
                 return schema.model_validate(json_data)
             except Exception as ve:
                 raise LLMError(
                     "invalid_json", f"Pydantic validation failed: {str(ve)}"
                 )
 
-        except (FileNotFoundError, ProcessLookupError):
+        except (FileNotFoundError, ProcessLookupError) as e:
+            if lf_generation:
+                try:
+                    lf_generation.update(output=str(e), metadata={"status": "failed", "error_category": "subprocess_crash"})
+                except Exception:
+                    pass
             raise LLMError(
                 "subprocess_crash",
                 "'codex' command not found in PATH.",
             )
-        except LLMError:
+        except LLMError as e:
+            if lf_generation:
+                try:
+                    lf_generation.update(output=str(e), metadata={"status": "failed", "error_category": e.category})
+                except Exception:
+                    pass
             raise
         except Exception as e:
+            if lf_generation:
+                try:
+                    lf_generation.update(output=str(e), metadata={"status": "failed", "error_category": "unknown"})
+                except Exception:
+                    pass
             raise LLMError(
                 "unknown", f"Unexpected Codex CLI error: {str(e)}"
             )
@@ -175,27 +225,47 @@ class GeminiClient(BaseLLMClient):
         prompt: str,
         schema: type[BaseModel],
         is_retry: bool = False,
+        trace_id: str = "",
+        callbacks: Optional[List[Any]] = None,
     ) -> BaseModel:
         if not config.GEMINI_API_KEY:
             raise LLMError("auth_lost", "GEMINI_API_KEY is not configured.")
 
-        try:
-            import google.generativeai as genai
+        import google.generativeai as genai
+        # Build the JSON schema instruction from the Pydantic model
+        schema_fields = schema.schema()
+        schema_instruction = json.dumps(schema_fields, indent=2)
 
+        full_prompt = (
+            f"Task: {task}\n\n"
+            f"{prompt}\n\n"
+            "Return ONLY valid JSON matching this schema:\n"
+            f"{schema_instruction}\n\n"
+            "Output ONLY the JSON object, no markdown fences, no extra text."
+        )
+
+        # Initialize manual Langfuse trace generation if credentials & trace_id exist
+        lf_generation = None
+        if config.LANGFUSE_PUBLIC_KEY and config.LANGFUSE_SECRET_KEY and trace_id:
+            try:
+                from langfuse import Langfuse
+                lf = Langfuse(
+                    public_key=config.LANGFUSE_PUBLIC_KEY,
+                    secret_key=config.LANGFUSE_SECRET_KEY,
+                    host=config.LANGFUSE_HOST
+                )
+                lf_generation = lf.generation(
+                    trace_id=trace_id,
+                    name=f"gemini-{task}",
+                    model="gemini-2.0-flash",
+                    input=full_prompt,
+                )
+            except Exception as e:
+                print(f"Error starting manual Langfuse generation: {e}")
+
+        try:
             genai.configure(api_key=config.GEMINI_API_KEY)
             model = genai.GenerativeModel("gemini-2.0-flash")
-
-            # Build the JSON schema instruction from the Pydantic model
-            schema_fields = schema.schema()
-            schema_instruction = json.dumps(schema_fields, indent=2)
-
-            full_prompt = (
-                f"Task: {task}\n\n"
-                f"{prompt}\n\n"
-                "Return ONLY valid JSON matching this schema:\n"
-                f"{schema_instruction}\n\n"
-                "Output ONLY the JSON object, no markdown fences, no extra text."
-            )
 
             response = await asyncio.to_thread(
                 model.generate_content, full_prompt
@@ -219,19 +289,32 @@ class GeminiClient(BaseLLMClient):
                         f"Original Prompt:\n{prompt}\n\n"
                         f"Invalid Output:\n{response_text}"
                     )
-                    return await self.run_json(task, repair_prompt, schema, is_retry=True)
+                    return await self.run_json(task, repair_prompt, schema, is_retry=True, trace_id=trace_id, callbacks=callbacks)
                 raise LLMError(
                     "invalid_json", f"Gemini JSON parse failed: {str(je)}"
                 )
 
             try:
+                if lf_generation:
+                    try:
+                        lf_generation.update(
+                            output=response_text,
+                            metadata={"status": "success"}
+                        )
+                    except Exception:
+                        pass
                 return schema.model_validate(json_data)
             except Exception as ve:
                 raise LLMError(
                     "invalid_json", f"Gemini Pydantic validation failed: {str(ve)}"
                 )
 
-        except LLMError:
+        except LLMError as e:
+            if lf_generation:
+                try:
+                    lf_generation.update(output=str(e), metadata={"status": "failed", "error_category": e.category})
+                except Exception:
+                    pass
             raise
         except ImportError:
             raise LLMError(
@@ -240,9 +323,19 @@ class GeminiClient(BaseLLMClient):
             )
         except Exception as e:
             err_str = str(e).lower()
+            category = "unknown"
             if "rate limit" in err_str or "429" in err_str:
-                raise LLMError("rate_limit", f"Gemini rate limit: {str(e)}")
+                category = "rate_limit"
             elif any(kw in err_str for kw in ["api key", "auth", "permission", "403"]):
+                category = "auth_lost"
+            if lf_generation:
+                try:
+                    lf_generation.update(output=str(e), metadata={"status": "failed", "error_category": category})
+                except Exception:
+                    pass
+            if category == "rate_limit":
+                raise LLMError("rate_limit", f"Gemini rate limit: {str(e)}")
+            elif category == "auth_lost":
                 raise LLMError("auth_lost", f"Gemini auth failure: {str(e)}")
             else:
                 raise LLMError("unknown", f"Gemini API error: {str(e)}")
@@ -263,6 +356,8 @@ class OpenAIDirectClient(BaseLLMClient):
         prompt: str,
         schema: type[BaseModel],
         is_retry: bool = False,
+        trace_id: str = "",
+        callbacks: Optional[List[Any]] = None,
     ) -> BaseModel:
         if not config.OPENAI_API_KEY:
             raise LLMError("auth_lost", "OPENAI_API_KEY is not configured.")
@@ -274,12 +369,16 @@ class OpenAIDirectClient(BaseLLMClient):
                 openai_api_key=config.OPENAI_API_KEY,
             )
             structured_llm = llm.with_structured_output(schema)
+            
+            config_dict = {"callbacks": callbacks} if callbacks else {}
+            
             response = await asyncio.to_thread(
                 structured_llm.invoke,
                 [
                     SystemMessage(content=f"You are a structured assistant. Task: {task}"),
                     HumanMessage(content=prompt),
                 ],
+                config_dict
             )
             return response
         except Exception as e:
@@ -307,6 +406,8 @@ class MockLLMClient(BaseLLMClient):
         prompt: str,
         schema: type[BaseModel],
         is_retry: bool = False,
+        trace_id: str = "",
+        callbacks: Optional[List[Any]] = None,
     ) -> BaseModel:
         # Build a minimal valid instance from the schema's defaults/field info
         fields = schema.model_fields if hasattr(schema, "model_fields") else schema.__fields__
@@ -376,6 +477,8 @@ class LocalRuleClient(BaseLLMClient):
         task: str,
         prompt: str,
         schema: type[BaseModel],
+        trace_id: str = "",
+        callbacks: Optional[List[Any]] = None,
     ) -> BaseModel:
         if task == "route_query":
             # Extract query from prompt
@@ -456,6 +559,8 @@ class LLMRouterClient(BaseLLMClient):
         prompt: str,
         schema: type[BaseModel],
         is_retry: bool = False,
+        trace_id: str = "",
+        callbacks: Optional[List[Any]] = None,
     ) -> BaseModel:
         prompt_hash = hashlib.sha256(
             f"{task}:{prompt}:{schema.__name__}".encode()
@@ -486,7 +591,7 @@ class LLMRouterClient(BaseLLMClient):
             start_ms = int(time.time() * 1000)
 
             try:
-                result = await client.run_json(task, prompt, schema)
+                result = await client.run_json(task, prompt, schema, trace_id=trace_id, callbacks=callbacks)
                 latency_ms = int(time.time() * 1000) - start_ms
 
                 # Success — cache and log
