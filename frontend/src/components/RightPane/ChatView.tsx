@@ -45,7 +45,13 @@ export default function ChatView({ docId }: Props) {
           if (cancelled) return;
           setChats((prev) => [chat, ...(prev ?? j.chats)]);
           setActiveId(chat.id);
-          setDraft(`Spiegami "${prefill}".`);
+          setDraft(
+            `Could you please explain the concept of "${prefill}" in detail based on this document?\n\n` +
+            `Specifically, I'd like to understand:\n` +
+            `1. Its core definition or purpose in the context of the text.\n` +
+            `2. Any key guidelines, rules, or steps associated with it.\n` +
+            `3. Any concrete examples or page references mentioned in the document.`
+          );
           return;
         }
         if (j.chats.length && !activeId) setActiveId(j.chats[0].id);
@@ -123,10 +129,10 @@ export default function ChatView({ docId }: Props) {
     setChats((prev) =>
       prev
         ? prev.map((c) =>
-            c.id === chatId
-              ? { ...c, messages: [...c.messages, optimisticUser], updatedAt: optimisticUser.ts }
-              : c,
-          )
+          c.id === chatId
+            ? { ...c, messages: [...c.messages, optimisticUser], updatedAt: optimisticUser.ts }
+            : c,
+        )
         : prev,
     );
     setDraft("");
@@ -153,20 +159,20 @@ export default function ChatView({ docId }: Props) {
       setChats((prev) =>
         prev
           ? prev.map((c) =>
-              c.id === chatId
-                ? {
-                    ...c,
-                    messages: [
-                      ...c.messages,
-                      {
-                        role: "assistant" as const,
-                        content: `(reply failed — ${(e as Error).message})`,
-                        ts: Date.now(),
-                      },
-                    ],
-                  }
-                : c,
-            )
+            c.id === chatId
+              ? {
+                ...c,
+                messages: [
+                  ...c.messages,
+                  {
+                    role: "assistant" as const,
+                    content: `(reply failed — ${(e as Error).message})`,
+                    ts: Date.now(),
+                  },
+                ],
+              }
+              : c,
+          )
           : prev,
       );
     } finally {
@@ -203,11 +209,10 @@ export default function ChatView({ docId }: Props) {
             chats.map((c) => (
               <div
                 key={c.id}
-                className={`group flex items-center gap-1 rounded-md px-2 py-1.5 text-[12px] ${
-                  activeId === c.id
+                className={`group flex items-center gap-1 rounded-md px-2 py-1.5 text-[12px] ${activeId === c.id
                     ? "bg-white text-[var(--ink-900)] shadow-[0_1px_0_rgba(17,17,19,0.04)]"
                     : "text-[var(--ink-700)] hover:bg-white"
-                }`}
+                  }`}
               >
                 <button
                   type="button"
@@ -312,11 +317,10 @@ function Bubble({
   return (
     <div className={`mb-3 flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-[13px] leading-relaxed ${
-          isUser
+        className={`max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-[13px] leading-relaxed ${isUser
             ? "bg-[var(--ink-900)] text-white"
             : "bg-[var(--surface-sunken)] text-[var(--ink-900)]"
-        } ${pulsing ? "animate-pulse" : ""}`}
+          } ${pulsing ? "animate-pulse" : ""}`}
       >
         {content}
       </div>

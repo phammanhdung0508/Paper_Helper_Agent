@@ -6,7 +6,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
-from app import config
+from app import config as app_config
 from app import database
 from app.llm_client import LLMRouterClient, run_async
 
@@ -65,13 +65,13 @@ def local_regex_router(query: str, current_doc_id: str) -> str:
     return "rag" if is_rag else "general"
 
 # Node 1: Router Node
-def router_node(state: AgentState, run_config: RunnableConfig = None) -> Dict[str, Any]:
+def router_node(state: AgentState, config: RunnableConfig = None) -> Dict[str, Any]:
     """Analyzes user query and decides whether to route to RAG or General Chat."""
     last_message = state.messages[-1]
     query = last_message.content if hasattr(last_message, "content") else str(last_message)
     
     # Check if we have OpenAI key
-    if not config.OPENAI_API_KEY:
+    if not app_config.OPENAI_API_KEY:
         # Fallback local regex routing
         route = local_regex_router(query, state.current_doc_id)
         return {"route": route, "context": []}
@@ -89,9 +89,9 @@ def router_node(state: AgentState, run_config: RunnableConfig = None) -> Dict[st
         
         trace_id = ""
         callbacks = None
-        if run_config:
-            trace_id = run_config.get("configurable", {}).get("trace_id", "")
-            callbacks = run_config.get("callbacks", [])
+        if config:
+            trace_id = config.get("configurable", {}).get("trace_id", "")
+            callbacks = config.get("callbacks", [])
             
         decision = run_async(client.run_json(
             task="route_query",
@@ -108,9 +108,9 @@ def router_node(state: AgentState, run_config: RunnableConfig = None) -> Dict[st
         return {"route": route, "context": []}
 
 # Node 2: General Chatbot Node
-def general_agent_node(state: AgentState, run_config: RunnableConfig = None) -> Dict[str, Any]:
+def general_agent_node(state: AgentState, config: RunnableConfig = None) -> Dict[str, Any]:
     """Handles general chit-chat and greetings."""
-    if not config.OPENAI_API_KEY:
+    if not app_config.OPENAI_API_KEY:
         reply = "Hello! I am the Paper Helper General Assistant, running in offline mode. Please configure your OpenAI API Key in the settings or .env file to enable full chat functionality."
         return {"messages": [AIMessage(content=reply)]}
         
@@ -137,9 +137,9 @@ def general_agent_node(state: AgentState, run_config: RunnableConfig = None) -> 
         
         trace_id = ""
         callbacks = None
-        if run_config:
-            trace_id = run_config.get("configurable", {}).get("trace_id", "")
-            callbacks = run_config.get("callbacks", [])
+        if config:
+            trace_id = config.get("configurable", {}).get("trace_id", "")
+            callbacks = config.get("callbacks", [])
             
         llm_reply = run_async(client.run_json(
             task="general_chat",
@@ -153,7 +153,7 @@ def general_agent_node(state: AgentState, run_config: RunnableConfig = None) -> 
         return {"messages": [AIMessage(content=f"Error in General Agent: {str(e)}")]}
 
 # Node 3: RAG Chatbot Node
-def rag_agent_node(state: AgentState, run_config: RunnableConfig = None) -> Dict[str, Any]:
+def rag_agent_node(state: AgentState, config: RunnableConfig = None) -> Dict[str, Any]:
     """Retrieves document context and answers queries grounded ONLY in the retrieved text."""
     last_message = state.messages[-1]
     query = last_message.content if hasattr(last_message, "content") else str(last_message)
@@ -188,7 +188,7 @@ def rag_agent_node(state: AgentState, run_config: RunnableConfig = None) -> Dict
                 
     context_str = "\n\n".join(context_chunks)
     
-    if not config.OPENAI_API_KEY:
+    if not app_config.OPENAI_API_KEY:
         reply = (
             "Offline Mode: Retrieved the following context chunks from the document:\n\n"
             f"{context_str}\n\n"
@@ -224,9 +224,9 @@ def rag_agent_node(state: AgentState, run_config: RunnableConfig = None) -> Dict
         
         trace_id = ""
         callbacks = None
-        if run_config:
-            trace_id = run_config.get("configurable", {}).get("trace_id", "")
-            callbacks = run_config.get("callbacks", [])
+        if config:
+            trace_id = config.get("configurable", {}).get("trace_id", "")
+            callbacks = config.get("callbacks", [])
             
         llm_reply = run_async(client.run_json(
             task="rag_chat",

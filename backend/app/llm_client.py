@@ -58,6 +58,7 @@ class BaseLLMClient(ABC):
     """Abstract base class. All providers expose the same interface."""
 
     provider_name: str = "base"
+    model_name: str = "unknown"
 
     @abstractmethod
     async def run_json(
@@ -80,6 +81,7 @@ class CodexCliClient(BaseLLMClient):
     """Spawns the local Codex CLI as a subprocess."""
 
     provider_name = "codex"
+    model_name = "codex-cli"
 
     async def run_json(
         self,
@@ -218,6 +220,7 @@ class GeminiClient(BaseLLMClient):
     """Uses the google-generativeai SDK."""
 
     provider_name = "gemini"
+    model_name = "gemini-2.0-flash"
 
     async def run_json(
         self,
@@ -349,6 +352,7 @@ class OpenAIDirectClient(BaseLLMClient):
     """Uses LangChain's ChatOpenAI with structured output."""
 
     provider_name = "openai"
+    model_name = "gpt-4o-mini"
 
     async def run_json(
         self,
@@ -399,6 +403,7 @@ class MockLLMClient(BaseLLMClient):
     """Returns deterministic Pydantic-valid responses for testing and offline use."""
 
     provider_name = "mock"
+    model_name = "mock-offline"
 
     async def run_json(
         self,
@@ -471,6 +476,7 @@ class LocalRuleClient(BaseLLMClient):
     """Local rule-based router that classifies queries using keywords."""
 
     provider_name = "local"
+    model_name = "regex-classifier"
 
     async def run_json(
         self,
@@ -570,6 +576,7 @@ class LLMRouterClient(BaseLLMClient):
         cached = self._cache_lookup(task, prompt_hash, schema.__name__)
         if cached is not None:
             self._log_call(task, "cache", True, 0, None, cache_hit=True)
+            print(f"[LLM Router] Cache hit for task '{task}'. Skipping provider call.")
             try:
                 return schema.model_validate(json.loads(cached))
             except Exception:
@@ -590,10 +597,12 @@ class LLMRouterClient(BaseLLMClient):
             client = client_cls()
             start_ms = int(time.time() * 1000)
 
+            print(f"[LLM Router] Calling provider '{provider_name}' (model: '{client.model_name}') for task '{task}'...")
             try:
                 result = await client.run_json(task, prompt, schema, trace_id=trace_id, callbacks=callbacks)
                 latency_ms = int(time.time() * 1000) - start_ms
 
+                print(f"[LLM Router] Provider '{provider_name}' (model: '{client.model_name}') succeeded in {latency_ms}ms.")
                 # Success — cache and log
                 self._log_call(task, provider_name, True, latency_ms, None, cache_hit=False)
                 result_json = result.model_dump_json() if hasattr(result, "model_dump_json") else json.dumps(result.model_dump() if hasattr(result, "model_dump") else result.dict())
@@ -605,7 +614,7 @@ class LLMRouterClient(BaseLLMClient):
                 latency_ms = int(time.time() * 1000) - start_ms
                 self._log_call(task, provider_name, False, latency_ms, e.category, cache_hit=False)
                 last_error = e
-                print(f"LLMRouter: {provider_name} failed for task '{task}': [{e.category}] {e.message}")
+                print(f"[LLM Router] Provider '{provider_name}' (model: '{client.model_name}') failed in {latency_ms}ms: [{e.category}] {e.message}")
 
                 if not config.ENABLE_LLM_FALLBACK:
                     raise
@@ -617,7 +626,7 @@ class LLMRouterClient(BaseLLMClient):
                 latency_ms = int(time.time() * 1000) - start_ms
                 self._log_call(task, provider_name, False, latency_ms, "unknown", cache_hit=False)
                 last_error = LLMError("unknown", str(e))
-                print(f"LLMRouter: {provider_name} unexpected error for task '{task}': {e}")
+                print(f"[LLM Router] Provider '{provider_name}' (model: '{client.model_name}') failed in {latency_ms}ms: [unknown] {e}")
 
                 if not config.ENABLE_LLM_FALLBACK:
                     raise last_error

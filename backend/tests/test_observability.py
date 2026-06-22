@@ -159,3 +159,175 @@ def test_host_validation_boundaries():
                 log_chat_feedback(req)
             assert exc_info.value.status_code == 500
             assert "Invalid Host URL" in exc_info.value.detail
+
+
+from langchain_core.messages import HumanMessage
+from app.graph import router_node, general_agent_node, rag_agent_node, AgentState
+
+@patch("app.graph.LLMRouterClient")
+@patch("app.graph.app_config")
+def test_router_node_config_propagation(mock_config, mock_client_cls):
+    mock_config.OPENAI_API_KEY = "sk-test"
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    
+    mock_decision = MagicMock()
+    mock_decision.route = "general"
+    
+    calls = []
+    async def spy_run_json(*args, **kwargs):
+        calls.append((args, kwargs))
+        return mock_decision
+    mock_client.run_json = spy_run_json
+    
+    state = AgentState(
+        messages=[HumanMessage(content="hello")],
+        route="unknown",
+        context=[],
+        current_doc_id=""
+    )
+    mock_cb = MagicMock()
+    config_dict = {
+        "configurable": {"trace_id": "test-trace-id"},
+        "callbacks": [mock_cb]
+    }
+    
+    router_node(state, config=config_dict)
+    
+    assert len(calls) == 1
+    kwargs = calls[0][1]
+    assert kwargs["trace_id"] == "test-trace-id"
+    assert kwargs["callbacks"] == [mock_cb]
+
+@patch("app.graph.LLMRouterClient")
+@patch("app.graph.app_config")
+def test_general_agent_node_config_propagation(mock_config, mock_client_cls):
+    mock_config.OPENAI_API_KEY = "sk-test"
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    
+    mock_reply = MagicMock()
+    mock_reply.response = "general reply"
+    
+    calls = []
+    async def spy_run_json(*args, **kwargs):
+        calls.append((args, kwargs))
+        return mock_reply
+    mock_client.run_json = spy_run_json
+    
+    state = AgentState(
+        messages=[HumanMessage(content="hello")],
+        route="general",
+        context=[],
+        current_doc_id=""
+    )
+    mock_cb = MagicMock()
+    config_dict = {
+        "configurable": {"trace_id": "test-trace-id-2"},
+        "callbacks": [mock_cb]
+    }
+    
+    general_agent_node(state, config=config_dict)
+    
+    assert len(calls) == 1
+    kwargs = calls[0][1]
+    assert kwargs["trace_id"] == "test-trace-id-2"
+    assert kwargs["callbacks"] == [mock_cb]
+
+@patch("app.graph.LLMRouterClient")
+@patch("app.graph.app_config")
+@patch("app.graph.database.get_vector_store")
+def test_rag_agent_node_config_propagation(mock_vector_store, mock_config, mock_client_cls):
+    mock_config.OPENAI_API_KEY = "sk-test"
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    
+    mock_reply = MagicMock()
+    mock_reply.response = "rag reply"
+    
+    calls = []
+    async def spy_run_json(*args, **kwargs):
+        calls.append((args, kwargs))
+        return mock_reply
+    mock_client.run_json = spy_run_json
+    
+    mock_vs_inst = MagicMock()
+    mock_vs_inst.similarity_search.return_value = []
+    mock_vector_store.return_value = mock_vs_inst
+    
+    state = AgentState(
+        messages=[HumanMessage(content="hello")],
+        route="rag",
+        context=[],
+        current_doc_id="doc-123"
+    )
+    mock_cb = MagicMock()
+    config_dict = {
+        "configurable": {"trace_id": "test-trace-id-3"},
+        "callbacks": [mock_cb]
+    }
+    
+    rag_agent_node(state, config=config_dict)
+    
+    assert len(calls) == 1
+    kwargs = calls[0][1]
+    assert kwargs["trace_id"] == "test-trace-id-3"
+    assert kwargs["callbacks"] == [mock_cb]
+
+@patch("app.graph.LLMRouterClient")
+@patch("app.graph.app_config")
+def test_langgraph_compilation_and_execution_config(mock_config, mock_client_cls):
+    mock_config.OPENAI_API_KEY = "sk-test"
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    
+    mock_decision = MagicMock()
+    mock_decision.route = "general"
+    mock_reply = MagicMock()
+    mock_reply.response = "hello back"
+    
+    calls = []
+    async def spy_run_json(*args, **kwargs):
+        calls.append((args, kwargs))
+        if kwargs.get("task") == "route_query":
+            return mock_decision
+        else:
+            return mock_reply
+            
+    mock_client.run_json = spy_run_json
+    
+    from app.graph import graph as langgraph_workflow
+    
+    inputs = {
+        "messages": [HumanMessage(content="hi")],
+        "current_doc_id": "",
+        "route": "unknown",
+        "context": []
+    }
+    mock_cb = MagicMock()
+    config_dict = {
+        "configurable": {
+            "thread_id": "thread-123",
+            "trace_id": "trace-123"
+        },
+        "callbacks": [mock_cb]
+    }
+    
+    result = langgraph_workflow.invoke(inputs, config_dict)
+    
+    assert len(calls) == 2
+    assert calls[0][1]["trace_id"] == "trace-123"
+    
+    cb0 = calls[0][1]["callbacks"]
+    if hasattr(cb0, "handlers"):
+        assert mock_cb in cb0.handlers
+    else:
+        assert cb0 == [mock_cb]
+        
+    assert calls[1][1]["trace_id"] == "trace-123"
+    cb1 = calls[1][1]["callbacks"]
+    if hasattr(cb1, "handlers"):
+        assert mock_cb in cb1.handlers
+    else:
+        assert cb1 == [mock_cb]
+
