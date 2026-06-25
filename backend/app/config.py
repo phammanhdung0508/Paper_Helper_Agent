@@ -6,7 +6,6 @@ load_dotenv()
 
 # API Keys
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # Langfuse Config
 LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY", "")
@@ -21,12 +20,12 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instr
 # LLM Routing Config
 ENABLE_LLM_FALLBACK = os.getenv("ENABLE_LLM_FALLBACK", "true").lower() in ("true", "1", "yes")
 ENABLE_LLM_DEBUG_LOG = os.getenv("ENABLE_LLM_DEBUG_LOG", "false").lower() in ("true", "1", "yes")
-LLM_ROUTER_PROVIDER = os.getenv("LLM_ROUTER_PROVIDER", "local,gemini,codex")
-LLM_GENERAL_PROVIDER = os.getenv("LLM_GENERAL_PROVIDER", "gemini,codex")
-LLM_RAG_PROVIDER = os.getenv("LLM_RAG_PROVIDER", "codex,gemini")
-LLM_KG_PROVIDER = os.getenv("LLM_KG_PROVIDER", "gemini,codex")
-LLM_VISUAL_PROVIDER = os.getenv("LLM_VISUAL_PROVIDER", "gemini,codex")
-LLM_EVAL_PROVIDER = os.getenv("LLM_EVAL_PROVIDER", "gemini,codex")
+LLM_ROUTER_PROVIDER = os.getenv("LLM_ROUTER_PROVIDER", "local,openrouter,codex")
+LLM_GENERAL_PROVIDER = os.getenv("LLM_GENERAL_PROVIDER", "openrouter,codex")
+LLM_RAG_PROVIDER = os.getenv("LLM_RAG_PROVIDER", "openrouter,codex")
+LLM_KG_PROVIDER = os.getenv("LLM_KG_PROVIDER", "openrouter,codex")
+LLM_VISUAL_PROVIDER = os.getenv("LLM_VISUAL_PROVIDER", "openrouter,codex")
+LLM_EVAL_PROVIDER = os.getenv("LLM_EVAL_PROVIDER", "openrouter,codex")
 
 # Workspace Folders
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

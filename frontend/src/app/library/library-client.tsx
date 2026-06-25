@@ -48,7 +48,7 @@ const FILENAME_TO_TITLE: Record<string, string> = {
 };
 
 function titleOf(filename: string): string {
-  return FILENAME_TO_TITLE[filename] ?? filename.replace(/\.pdf$/i, "");
+  return FILENAME_TO_TITLE[filename] ?? filename.replace(/\.pdf$/i, "").replace(/_+/g, " ").trim();
 }
 
 function humaniseAgo(ts: number): string {
@@ -240,7 +240,7 @@ function LibraryRowItem({
     <li className="group relative flex items-center gap-4 rounded-xl border border-[var(--border-subtle)] bg-white p-4 transition hover:border-[var(--border-strong)]">
       <Link
         href={`/viewer/${row.id}`}
-        className="flex flex-1 items-center gap-4"
+        className="flex flex-1 min-w-0 items-center gap-4"
       >
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-sunken)] text-[var(--ink-500)]">
           <FileText className="h-5 w-5" aria-hidden />

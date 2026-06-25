@@ -277,158 +277,7 @@ class CodexCliClient(BaseLLMClient):
 
 
 # ---------------------------------------------------------------------------
-# Gemini client (Google Generative AI SDK)
-# ---------------------------------------------------------------------------
-
-class GeminiClient(BaseLLMClient):
-    """Uses the google-generativeai SDK."""
-
-    provider_name = "gemini"
-    model_name = "gemini-2.0-flash"
-
-    async def run_json(
-        self,
-        task: str,
-        prompt: str,
-        schema: type[BaseModel],
-        is_retry: bool = False,
-        trace_id: str = "",
-        callbacks: Optional[List[Any]] = None,
-    ) -> BaseModel:
-        if not config.GEMINI_API_KEY:
-            raise LLMError("auth_lost", "GEMINI_API_KEY is not configured.")
-
-        import google.generativeai as genai
-        # Build the JSON schema instruction from the Pydantic model
-        schema_fields = schema.schema()
-        schema_instruction = json.dumps(schema_fields, indent=2)
-
-        full_prompt = (
-            f"Task: {task}\n\n"
-            f"{prompt}\n\n"
-            "Return ONLY valid JSON matching this schema:\n"
-            f"{schema_instruction}\n\n"
-            "Output ONLY the JSON object, no markdown fences, no extra text."
-        )
-
-        # Initialize manual Langfuse trace generation if credentials exist
-        lf_generation = None
-        lf = get_langfuse_client()
-        if lf:
-            if not trace_id:
-                trace_id = str(uuid.uuid4())
-            try:
-                lf_generation = lf.generation(
-                    trace_id=trace_id,
-                    name=f"gemini-{task}",
-                    model="gemini-2.0-flash",
-                    input=full_prompt,
-                )
-            except Exception as e:
-                print(f"Error starting manual Langfuse generation: {e}")
-
-        try:
-            genai.configure(api_key=config.GEMINI_API_KEY)
-            model = genai.GenerativeModel("gemini-2.0-flash")
-
-            response = await asyncio.to_thread(
-                model.generate_content, full_prompt
-            )
-
-            response_text = response.text.strip()
-
-            # Strip markdown fences if present
-            if response_text.startswith("```"):
-                lines = response_text.split("\n")
-                lines = [l for l in lines if not l.strip().startswith("```")]
-                response_text = "\n".join(lines).strip()
-
-            try:
-                json_data = json.loads(response_text)
-            except json.JSONDecodeError as je:
-                _debug_log_llm(
-                    task, self.provider_name, self.model_name, prompt, schema,
-                    raw_response=response_text, success=False,
-                    error_category="invalid_json", error_message=str(je),
-                )
-                if not is_retry:
-                    repair_prompt = (
-                        "The previous output was invalid JSON. "
-                        "Please repair and output valid JSON matching the schema.\n\n"
-                        f"Original Prompt:\n{prompt}\n\n"
-                        f"Invalid Output:\n{response_text}"
-                    )
-                    return await self.run_json(task, repair_prompt, schema, is_retry=True, trace_id=trace_id, callbacks=callbacks)
-                raise LLMError(
-                    "invalid_json", f"Gemini JSON parse failed: {str(je)}"
-                )
-
-            try:
-                parsed = schema.model_validate(json_data)
-                if lf_generation:
-                    try:
-                        usage = {}
-                        if hasattr(response, "usage_metadata") and response.usage_metadata:
-                            usage = {
-                                "input": response.usage_metadata.prompt_token_count,
-                                "output": response.usage_metadata.candidates_token_count,
-                                "total": response.usage_metadata.total_token_count
-                            }
-                        lf_generation.end(
-                            output=response_text,
-                            metadata={"status": "success"},
-                            usage=usage
-                        )
-                        flush_langfuse()
-                    except Exception as e:
-                        print(f"Error ending manual Langfuse generation: {e}")
-                _debug_log_llm(
-                    task, self.provider_name, self.model_name, prompt, schema,
-                    raw_response=response_text, parsed_response=parsed, success=True,
-                )
-                return parsed
-            except Exception as ve:
-                _debug_log_llm(
-                    task, self.provider_name, self.model_name, prompt, schema,
-                    raw_response=response_text, success=False,
-                    error_category="invalid_json", error_message=str(ve),
-                )
-                raise LLMError(
-                    "invalid_json", f"Gemini Pydantic validation failed: {str(ve)}"
-                )
-
-        except LLMError as e:
-            if lf_generation:
-                try:
-                    lf_generation.end(output=str(e), metadata={"status": "failed", "error_category": e.category})
-                    flush_langfuse()
-                except Exception:
-                    pass
-            raise
-        except ImportError:
-            raise LLMError(
-                "unknown",
-                "google-generativeai package is not installed. Run: pip install google-generativeai",
-            )
-        except Exception as e:
-            err_str = str(e).lower()
-            category = "unknown"
-            if "rate limit" in err_str or "429" in err_str:
-                category = "rate_limit"
-            elif any(kw in err_str for kw in ["api key", "auth", "permission", "403"]):
-                category = "auth_lost"
-            if lf_generation:
-                try:
-                    lf_generation.end(output=str(e), metadata={"status": "failed", "error_category": category})
-                    flush_langfuse()
-                except Exception:
-                    pass
-            if category == "rate_limit":
-                raise LLMError("rate_limit", f"Gemini rate limit: {str(e)}")
-            elif category == "auth_lost":
-                raise LLMError("auth_lost", f"Gemini auth failure: {str(e)}")
-            else:
-                raise LLMError("unknown", f"Gemini API error: {str(e)}")
+# Gemini client removed.
 
 
 # ---------------------------------------------------------------------------
@@ -834,7 +683,6 @@ class LocalRuleClient(BaseLLMClient):
 
 _PROVIDER_REGISTRY = {
     "codex": CodexCliClient,
-    "gemini": GeminiClient,
     "openai": OpenAIDirectClient,
     "openrouter": OpenRouterClient,
     "mock": MockLLMClient,
@@ -855,7 +703,7 @@ _TASK_PROVIDER_MAP = {
 def _get_provider_order(task: str) -> List[str]:
     """Returns the ordered list of provider names for a given task."""
     config_key = _TASK_PROVIDER_MAP.get(task, "LLM_GENERAL_PROVIDER")
-    raw = getattr(config, config_key, "gemini,codex")
+    raw = getattr(config, config_key, "openrouter,codex")
     providers = [p.strip() for p in raw.split(",") if p.strip()]
     # Filter to only providers that exist in the registry
     return [p for p in providers if p in _PROVIDER_REGISTRY]

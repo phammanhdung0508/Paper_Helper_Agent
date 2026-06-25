@@ -20,7 +20,7 @@ from app import database
 from app.llm_client import (
     BaseLLMClient,
     CodexCliClient,
-    GeminiClient,
+    OpenRouterClient,
     OpenAIDirectClient,
     MockLLMClient,
     LLMRouterClient,
@@ -75,7 +75,7 @@ def test_provider_order_route_query():
     assert len(providers) > 0
     # Should contain only valid provider names
     for p in providers:
-        assert p in ("codex", "gemini", "openai", "mock", "local")
+        assert p in ("codex", "openrouter", "openai", "mock", "local")
 
 
 def test_provider_order_general_chat():
@@ -103,17 +103,17 @@ def test_provider_order_unknown_task_falls_back():
 # LLMRouterClient fallback tests
 # ---------------------------------------------------------------------------
 
-def test_router_gemini_fails_codex_fallback():
-    """Verify when Gemini fails, the router falls back to the next provider."""
-    with patch.object(GeminiClient, "run_json", new_callable=AsyncMock) as mock_gemini, \
+def test_router_openrouter_fails_codex_fallback():
+    """Verify when OpenRouter fails, the router falls back to the next provider."""
+    with patch.object(OpenRouterClient, "run_json", new_callable=AsyncMock) as mock_or, \
          patch.object(CodexCliClient, "run_json", new_callable=AsyncMock) as mock_codex, \
          patch("app.llm_client.LLMRouterClient._cache_lookup", return_value=None), \
-         patch("app.llm_client._get_provider_order", return_value=["gemini", "codex"]), \
+         patch("app.llm_client._get_provider_order", return_value=["openrouter", "codex"]), \
          patch("app.llm_client.config") as mock_config:
 
         mock_config.ENABLE_LLM_FALLBACK = True
 
-        mock_gemini.side_effect = LLMError("rate_limit", "Gemini rate limited")
+        mock_or.side_effect = LLMError("rate_limit", "OpenRouter rate limited")
         mock_codex.return_value = TestSchema(answer="codex fallback", score=42)
 
         router = LLMRouterClient()
@@ -122,43 +122,43 @@ def test_router_gemini_fails_codex_fallback():
         assert isinstance(result, TestSchema)
         assert result.answer == "codex fallback"
         assert result.score == 42
-        mock_gemini.assert_called_once()
+        mock_or.assert_called_once()
         mock_codex.assert_called_once()
 
 
-def test_router_codex_rate_limited_gemini_fallback():
-    """Verify when Codex is rate-limited, the router falls back to Gemini."""
+def test_router_codex_rate_limited_openrouter_fallback():
+    """Verify when Codex is rate-limited, the router falls back to OpenRouter."""
     with patch.object(CodexCliClient, "run_json", new_callable=AsyncMock) as mock_codex, \
-         patch.object(GeminiClient, "run_json", new_callable=AsyncMock) as mock_gemini, \
+         patch.object(OpenRouterClient, "run_json", new_callable=AsyncMock) as mock_or, \
          patch("app.llm_client.LLMRouterClient._cache_lookup", return_value=None), \
-         patch("app.llm_client._get_provider_order", return_value=["codex", "gemini"]), \
+         patch("app.llm_client._get_provider_order", return_value=["codex", "openrouter"]), \
          patch("app.llm_client.config") as mock_config:
 
         mock_config.ENABLE_LLM_FALLBACK = True
 
         mock_codex.side_effect = LLMError("rate_limit", "Codex rate limit exceeded")
-        mock_gemini.return_value = TestSchema(answer="gemini fallback", score=88)
+        mock_or.return_value = TestSchema(answer="openrouter fallback", score=88)
 
         router = LLMRouterClient()
         result = run_async(router.run_json("rag_chat", "What is X?", TestSchema))
 
         assert isinstance(result, TestSchema)
-        assert result.answer == "gemini fallback"
+        assert result.answer == "openrouter fallback"
         mock_codex.assert_called_once()
-        mock_gemini.assert_called_once()
+        mock_or.assert_called_once()
 
 
 def test_router_all_providers_fail_graceful_error():
     """Verify when all providers fail, a graceful LLMError is raised."""
-    with patch.object(GeminiClient, "run_json", new_callable=AsyncMock) as mock_gemini, \
+    with patch.object(OpenRouterClient, "run_json", new_callable=AsyncMock) as mock_or, \
          patch.object(CodexCliClient, "run_json", new_callable=AsyncMock) as mock_codex, \
          patch("app.llm_client.LLMRouterClient._cache_lookup", return_value=None), \
-         patch("app.llm_client._get_provider_order", return_value=["gemini", "codex"]), \
+         patch("app.llm_client._get_provider_order", return_value=["openrouter", "codex"]), \
          patch("app.llm_client.config") as mock_config:
 
         mock_config.ENABLE_LLM_FALLBACK = True
 
-        mock_gemini.side_effect = LLMError("auth_lost", "No Gemini key")
+        mock_or.side_effect = LLMError("auth_lost", "No OpenRouter key")
         mock_codex.side_effect = LLMError("subprocess_crash", "codex not found")
 
         router = LLMRouterClient()
@@ -174,7 +174,7 @@ def test_router_cache_hit_avoids_provider_call():
 
     with patch("app.llm_client.LLMRouterClient._cache_lookup", return_value=cached_json), \
          patch("app.llm_client.LLMRouterClient._log_call") as mock_log, \
-         patch.object(GeminiClient, "run_json", new_callable=AsyncMock) as mock_gemini, \
+         patch.object(OpenRouterClient, "run_json", new_callable=AsyncMock) as mock_or, \
          patch.object(CodexCliClient, "run_json", new_callable=AsyncMock) as mock_codex:
 
         router = LLMRouterClient()
@@ -184,7 +184,7 @@ def test_router_cache_hit_avoids_provider_call():
         assert result.answer == "cached answer"
         assert result.score == 99
         # Provider should NOT be called
-        mock_gemini.assert_not_called()
+        mock_or.assert_not_called()
         mock_codex.assert_not_called()
         # Log should record cache hit
         mock_log.assert_called_once()
@@ -194,15 +194,15 @@ def test_router_cache_hit_avoids_provider_call():
 
 def test_router_fallback_disabled_raises_immediately():
     """Verify when ENABLE_LLM_FALLBACK is false, first failure raises immediately."""
-    with patch.object(GeminiClient, "run_json", new_callable=AsyncMock) as mock_gemini, \
+    with patch.object(OpenRouterClient, "run_json", new_callable=AsyncMock) as mock_or, \
          patch.object(CodexCliClient, "run_json", new_callable=AsyncMock) as mock_codex, \
          patch("app.llm_client.LLMRouterClient._cache_lookup", return_value=None), \
-         patch("app.llm_client._get_provider_order", return_value=["gemini", "codex"]), \
+         patch("app.llm_client._get_provider_order", return_value=["openrouter", "codex"]), \
          patch("app.llm_client.config") as mock_config:
 
         mock_config.ENABLE_LLM_FALLBACK = False
 
-        mock_gemini.side_effect = LLMError("rate_limit", "Gemini rate limited")
+        mock_or.side_effect = LLMError("rate_limit", "OpenRouter rate limited")
         mock_codex.return_value = TestSchema(answer="should not reach", score=0)
 
         router = LLMRouterClient()
@@ -257,7 +257,7 @@ def test_log_llm_call():
     database.db_init()
     # Should not raise
     database.log_llm_call("test_task", "mock", True, 150, None, False)
-    database.log_llm_call("test_task", "gemini", False, 5000, "rate_limit", False)
+    database.log_llm_call("test_task", "openrouter", False, 5000, "rate_limit", False)
 
     conn = database.get_db_connection()
     cursor = conn.cursor()

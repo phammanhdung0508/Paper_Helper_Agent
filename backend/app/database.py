@@ -551,7 +551,7 @@ def log_llm_call(task: str, provider: str, success: bool, latency_ms: int, error
     conn.close()
 
 _SECRET_PATTERNS = [
-    re.compile(r"(OPENAI_API_KEY|GEMINI_API_KEY|LANGFUSE_SECRET_KEY)\s*=\s*[^\s]+", re.IGNORECASE),
+    re.compile(r"(OPENAI_API_KEY|GEMINI_API_KEY|OPENROUTER_API_KEY|LANGFUSE_SECRET_KEY)\s*=\s*[^\s]+", re.IGNORECASE),
     re.compile(r"Bearer\s+[A-Za-z0-9._\-]+", re.IGNORECASE),
     re.compile(r"sk-[A-Za-z0-9_\-]{12,}"),
     re.compile(r"gho_[A-Za-z0-9_]{12,}"),

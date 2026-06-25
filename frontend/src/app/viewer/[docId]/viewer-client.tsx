@@ -134,6 +134,60 @@ export default function ViewerClient({ docId }: { docId: string }) {
     }
   }, [docId, rightPaneMode]);
 
+  // ── Resizable split-pane width state and handlers ──────────────────
+  const [rightWidth, setRightWidth] = useState<number>(() => {
+    if (typeof window !== "undefined") {
+      const saved = window.sessionStorage.getItem(`getit:${docId}:right-width`);
+      if (saved) {
+        const val = parseInt(saved, 10);
+        if (!isNaN(val)) return Math.max(420, Math.min(720, val));
+      }
+    }
+    return 500; // default initial width
+  });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartRef = useRef<{ clientX: number; startWidth: number } | null>(null);
+
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(`getit:${docId}:right-width`, String(rightWidth));
+    } catch {
+      /* noop */
+    }
+  }, [docId, rightWidth]);
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+    dragStartRef.current = {
+      clientX: e.clientX,
+      startWidth: rightWidth,
+    };
+  };
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handlePointerMove = (e: PointerEvent) => {
+      if (!dragStartRef.current) return;
+      const deltaX = e.clientX - dragStartRef.current.clientX;
+      const newWidth = dragStartRef.current.startWidth - deltaX;
+      setRightWidth(Math.max(420, Math.min(720, newWidth)));
+    };
+
+    const handlePointerUp = () => {
+      setIsDragging(false);
+      dragStartRef.current = null;
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [isDragging]);
+
   // ── Chat → knowledge-graph evaluation, batched per visit ──────────────
   //
   // The Chat tool no longer triggers an evaluation after every reply. Instead
@@ -276,7 +330,7 @@ export default function ViewerClient({ docId }: { docId: string }) {
 
   const docTitle = useMemo(
     () =>
-      meta && (FILENAME_TO_TITLE[meta.filename] || meta.filename.replace(/\.pdf$/i, "")),
+      meta && (FILENAME_TO_TITLE[meta.filename] || meta.filename.replace(/\.pdf$/i, "").replace(/_+/g, " ").trim()),
     [meta],
   );
 
@@ -407,6 +461,12 @@ export default function ViewerClient({ docId }: { docId: string }) {
 
   return (
     <div className="flex flex-1 min-h-0 flex-col bg-[var(--surface-canvas)]">
+      {isDragging && (
+        <div
+          className="fixed inset-0 z-[9999] cursor-col-resize select-none"
+          onPointerUp={() => setIsDragging(false)}
+        />
+      )}
       {/* Top tab bar — Upload + Library pinned on the left, then the
           open-document tab (acts as the active "window"). Clicking
           Upload or Library navigates away, closing this doc tab. */}
@@ -447,7 +507,7 @@ export default function ViewerClient({ docId }: { docId: string }) {
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 gap-2 bg-[var(--surface-canvas)] p-2">
+      <div className="flex min-h-0 flex-1 gap-0 bg-[var(--surface-canvas)] p-2">
         <div className="min-w-0 flex-1 overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-white">
           <PdfViewer
             pdfUrl={meta.pdfUrl}
@@ -459,7 +519,23 @@ export default function ViewerClient({ docId }: { docId: string }) {
             detecting={detecting}
           />
         </div>
-        <div className="flex w-[44%] min-w-[420px] max-w-[720px] flex-col overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-white">
+
+        {/* Resizable Divider */}
+        <div
+          onPointerDown={handlePointerDown}
+          className="group relative w-3 cursor-col-resize select-none flex-shrink-0 flex-grow-0"
+        >
+          <div
+            className={`absolute inset-y-4 left-1/2 w-[3px] -translate-x-1/2 rounded transition-colors ${
+              isDragging ? "bg-[var(--accent-500)]" : "bg-transparent group-hover:bg-[var(--accent-300)]"
+            }`}
+          />
+        </div>
+
+        <div
+          style={{ width: `${rightWidth}px` }}
+          className="flex flex-col overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-white flex-shrink-0 flex-grow-0"
+        >
           <RightPane
             docId={docId}
             mode={rightPaneMode}

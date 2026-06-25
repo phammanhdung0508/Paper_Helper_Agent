@@ -73,7 +73,7 @@ class ConceptGraphAgent:
     @staticmethod
     def build_graph(doc_id: str, document_text: str, llm_client: BaseLLMClient = None) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """Extracts 6-25 concepts and relationship edges from the document text."""
-        if not config.OPENAI_API_KEY and not config.GEMINI_API_KEY:
+        if not config.OPENAI_API_KEY and not config.OPENROUTER_API_KEY:
             return ConceptGraphAgent._mock_graph(doc_id)
             
         try:
@@ -161,7 +161,7 @@ class VisualSandboxAgent:
     @staticmethod
     def generate_spec(doc_id: str, concept_id: str, concept_label: str, concept_explanation: str, llm_client: BaseLLMClient = None) -> Dict[str, Any]:
         """Plans and generates a structured spec for a concept."""
-        if not config.OPENAI_API_KEY and not config.GEMINI_API_KEY:
+        if not config.OPENAI_API_KEY and not config.OPENROUTER_API_KEY:
             return VisualSandboxAgent._mock_spec(doc_id, concept_id, concept_label)
             
         try:
@@ -298,7 +298,7 @@ class MasteryEvaluatorAgent:
     @staticmethod
     def generate_quiz_question(concept_label: str, explanation: str, llm_client: BaseLLMClient = None) -> str:
         """Generates a study question to evaluate the user's comprehension of the concept."""
-        if not config.OPENAI_API_KEY and not config.GEMINI_API_KEY:
+        if not config.OPENAI_API_KEY and not config.OPENROUTER_API_KEY:
             return f"Explain the core concept of '{concept_label}' and list two main features or details of it."
             
         try:
@@ -324,7 +324,7 @@ class MasteryEvaluatorAgent:
         """Evaluates student's written response and calculates updated four-axis mastery scores with monotone clamping."""
         prev = current_scores
         
-        if not config.OPENAI_API_KEY and not config.GEMINI_API_KEY:
+        if not config.OPENAI_API_KEY and not config.OPENROUTER_API_KEY:
             # Default increment offline
             new_scores = {
                 "memory": min(100, prev.get("memory", 0) + 20),

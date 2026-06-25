@@ -299,7 +299,7 @@ export default function UploadCard() {
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             {libraryPreview.map((d) => {
               const title =
-                FILENAME_TO_TITLE[d.filename] ?? d.filename.replace(/\.pdf$/i, "");
+                FILENAME_TO_TITLE[d.filename] ?? d.filename.replace(/\.pdf$/i, "").replace(/_+/g, " ").trim();
               return (
                 <Link
                   key={d.id}

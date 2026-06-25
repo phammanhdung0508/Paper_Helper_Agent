@@ -43,6 +43,10 @@ export default function TwoDAnimView({ spec, onRuntimeError }: Props) {
     let lastT = performance.now();
     let raf = 0;
 
+    let logicalW = container.clientWidth;
+    let logicalH = container.clientHeight;
+    let scale = 1;
+
     const resize = () => {
       const dpr = Math.min(window.devicePixelRatio, 2);
       const w = container.clientWidth;
@@ -51,13 +55,25 @@ export default function TwoDAnimView({ spec, onRuntimeError }: Props) {
       canvas.height = Math.floor(h * dpr);
       canvas.style.width = `${w}px`;
       canvas.style.height = `${h}px`;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      const minLogicalWidth = 800;
+      if (w < minLogicalWidth && w > 0) {
+        scale = w / minLogicalWidth;
+        logicalW = minLogicalWidth;
+        logicalH = h / scale;
+      } else {
+        scale = 1;
+        logicalW = w;
+        logicalH = h;
+      }
+
+      ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
     };
     resize();
 
     try {
       const fn = compileFn(spec.setup_code);
-      const ret = fn({ ctx, width: container.clientWidth, height: container.clientHeight }) as
+      const ret = fn({ ctx, width: logicalW, height: logicalH }) as
         | { draw?: DrawFn }
         | undefined;
       if (ret && typeof ret.draw === "function") drawCb = ret.draw;
@@ -74,7 +90,7 @@ export default function TwoDAnimView({ spec, onRuntimeError }: Props) {
       const dt = (now - lastT) / 1000;
       lastT = now;
       try {
-        drawCb?.(ctx, container.clientWidth, container.clientHeight, t, dt);
+        drawCb?.(ctx, logicalW, logicalH, t, dt);
       } catch (e) {
         console.warn("2D anim draw threw (will be reported for repair):", e);
         reportError(`Animation crashed mid-frame: ${(e as Error).message}`);

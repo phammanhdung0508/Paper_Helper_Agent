@@ -70,8 +70,8 @@ def router_node(state: AgentState, config: RunnableConfig = None) -> Dict[str, A
     last_message = state.messages[-1]
     query = last_message.content if hasattr(last_message, "content") else str(last_message)
     
-    # Check if we have OpenAI or Gemini key
-    if not app_config.OPENAI_API_KEY and not app_config.GEMINI_API_KEY:
+    # Check if we have OpenAI or OpenRouter key
+    if not app_config.OPENAI_API_KEY and not app_config.OPENROUTER_API_KEY:
         # Fallback local regex routing
         route = local_regex_router(query, state.current_doc_id)
         return {"route": route, "context": []}
@@ -110,7 +110,7 @@ def router_node(state: AgentState, config: RunnableConfig = None) -> Dict[str, A
 # Node 2: General Chatbot Node
 def general_agent_node(state: AgentState, config: RunnableConfig = None) -> Dict[str, Any]:
     """Handles general chit-chat and greetings."""
-    if not app_config.OPENAI_API_KEY and not app_config.GEMINI_API_KEY:
+    if not app_config.OPENAI_API_KEY and not app_config.OPENROUTER_API_KEY:
         reply = "Hello! I am the Paper Helper General Assistant, running in offline mode. Please configure your API Key in the settings or .env file to enable full chat functionality."
         return {"messages": [AIMessage(content=reply)]}
         
@@ -188,7 +188,7 @@ def rag_agent_node(state: AgentState, config: RunnableConfig = None) -> Dict[str
                 
     context_str = "\n\n".join(context_chunks)
     
-    if not app_config.OPENAI_API_KEY and not app_config.GEMINI_API_KEY:
+    if not app_config.OPENAI_API_KEY and not app_config.OPENROUTER_API_KEY:
         reply = (
             "Offline Mode: Retrieved the following context chunks from the document:\n\n"
             f"{context_str}\n\n"

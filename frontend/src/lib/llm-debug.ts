@@ -32,7 +32,7 @@ export function isLLMDebugEnabled(): boolean {
 function redactSecrets(value: unknown): string | undefined {
   if (value == null) return undefined;
   let text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
-  text = text.replace(/(OPENAI_API_KEY|GEMINI_API_KEY|LANGFUSE_SECRET_KEY)\s*=\s*[^\s]+/gi, "$1=[REDACTED]");
+  text = text.replace(/(OPENAI_API_KEY|GEMINI_API_KEY|OPENROUTER_API_KEY|LANGFUSE_SECRET_KEY)\s*=\s*[^\s]+/gi, "$1=[REDACTED]");
   text = text.replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "[REDACTED]");
   text = text.replace(/sk-[A-Za-z0-9_-]{12,}/g, "[REDACTED]");
   text = text.replace(/gho_[A-Za-z0-9_]{12,}/g, "[REDACTED]");
