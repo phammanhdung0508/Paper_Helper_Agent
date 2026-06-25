@@ -28,7 +28,9 @@ from pydantic import BaseModel
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
+import uuid
 from app import config
+from app.observability import get_langfuse_client, flush_langfuse
 
 
 # ---------------------------------------------------------------------------
@@ -138,16 +140,13 @@ class CodexCliClient(BaseLLMClient):
         trace_id: str = "",
         callbacks: Optional[List[Any]] = None,
     ) -> BaseModel:
-        # Initialize manual Langfuse trace generation if credentials & trace_id exist
+        # Initialize manual Langfuse trace generation if credentials exist
         lf_generation = None
-        if config.LANGFUSE_PUBLIC_KEY and config.LANGFUSE_SECRET_KEY and trace_id:
+        lf = get_langfuse_client()
+        if lf:
+            if not trace_id:
+                trace_id = str(uuid.uuid4())
             try:
-                from langfuse import Langfuse
-                lf = Langfuse(
-                    public_key=config.LANGFUSE_PUBLIC_KEY,
-                    secret_key=config.LANGFUSE_SECRET_KEY,
-                    host=config.LANGFUSE_HOST
-                )
                 lf_generation = lf.generation(
                     trace_id=trace_id,
                     name=f"codex-{task}",
@@ -224,10 +223,11 @@ class CodexCliClient(BaseLLMClient):
                 parsed = schema.model_validate(json_data)
                 if lf_generation:
                     try:
-                        lf_generation.update(
+                        lf_generation.end(
                             output=stdout_str,
                             metadata={"status": "success"}
                         )
+                        flush_langfuse()
                     except Exception:
                         pass
                 _debug_log_llm(
@@ -248,7 +248,8 @@ class CodexCliClient(BaseLLMClient):
         except (FileNotFoundError, ProcessLookupError) as e:
             if lf_generation:
                 try:
-                    lf_generation.update(output=str(e), metadata={"status": "failed", "error_category": "subprocess_crash"})
+                    lf_generation.end(output=str(e), metadata={"status": "failed", "error_category": "subprocess_crash"})
+                    flush_langfuse()
                 except Exception:
                     pass
             raise LLMError(
@@ -258,14 +259,16 @@ class CodexCliClient(BaseLLMClient):
         except LLMError as e:
             if lf_generation:
                 try:
-                    lf_generation.update(output=str(e), metadata={"status": "failed", "error_category": e.category})
+                    lf_generation.end(output=str(e), metadata={"status": "failed", "error_category": e.category})
+                    flush_langfuse()
                 except Exception:
                     pass
             raise
         except Exception as e:
             if lf_generation:
                 try:
-                    lf_generation.update(output=str(e), metadata={"status": "failed", "error_category": "unknown"})
+                    lf_generation.end(output=str(e), metadata={"status": "failed", "error_category": "unknown"})
+                    flush_langfuse()
                 except Exception:
                     pass
             raise LLMError(
@@ -308,16 +311,13 @@ class GeminiClient(BaseLLMClient):
             "Output ONLY the JSON object, no markdown fences, no extra text."
         )
 
-        # Initialize manual Langfuse trace generation if credentials & trace_id exist
+        # Initialize manual Langfuse trace generation if credentials exist
         lf_generation = None
-        if config.LANGFUSE_PUBLIC_KEY and config.LANGFUSE_SECRET_KEY and trace_id:
+        lf = get_langfuse_client()
+        if lf:
+            if not trace_id:
+                trace_id = str(uuid.uuid4())
             try:
-                from langfuse import Langfuse
-                lf = Langfuse(
-                    public_key=config.LANGFUSE_PUBLIC_KEY,
-                    secret_key=config.LANGFUSE_SECRET_KEY,
-                    host=config.LANGFUSE_HOST
-                )
                 lf_generation = lf.generation(
                     trace_id=trace_id,
                     name=f"gemini-{task}",
@@ -367,12 +367,21 @@ class GeminiClient(BaseLLMClient):
                 parsed = schema.model_validate(json_data)
                 if lf_generation:
                     try:
-                        lf_generation.update(
+                        usage = {}
+                        if hasattr(response, "usage_metadata") and response.usage_metadata:
+                            usage = {
+                                "input": response.usage_metadata.prompt_token_count,
+                                "output": response.usage_metadata.candidates_token_count,
+                                "total": response.usage_metadata.total_token_count
+                            }
+                        lf_generation.end(
                             output=response_text,
-                            metadata={"status": "success"}
+                            metadata={"status": "success"},
+                            usage=usage
                         )
-                    except Exception:
-                        pass
+                        flush_langfuse()
+                    except Exception as e:
+                        print(f"Error ending manual Langfuse generation: {e}")
                 _debug_log_llm(
                     task, self.provider_name, self.model_name, prompt, schema,
                     raw_response=response_text, parsed_response=parsed, success=True,
@@ -391,7 +400,8 @@ class GeminiClient(BaseLLMClient):
         except LLMError as e:
             if lf_generation:
                 try:
-                    lf_generation.update(output=str(e), metadata={"status": "failed", "error_category": e.category})
+                    lf_generation.end(output=str(e), metadata={"status": "failed", "error_category": e.category})
+                    flush_langfuse()
                 except Exception:
                     pass
             raise
@@ -409,7 +419,8 @@ class GeminiClient(BaseLLMClient):
                 category = "auth_lost"
             if lf_generation:
                 try:
-                    lf_generation.update(output=str(e), metadata={"status": "failed", "error_category": category})
+                    lf_generation.end(output=str(e), metadata={"status": "failed", "error_category": category})
+                    flush_langfuse()
                 except Exception:
                     pass
             if category == "rate_limit":
@@ -442,6 +453,22 @@ class OpenAIDirectClient(BaseLLMClient):
         if not config.OPENAI_API_KEY:
             raise LLMError("auth_lost", "OPENAI_API_KEY is not configured.")
 
+        # Setup fallback callbacks for direct OpenAI execution if not provided but keys exist
+        local_callbacks = callbacks
+        if not local_callbacks and config.LANGFUSE_PUBLIC_KEY and config.LANGFUSE_SECRET_KEY:
+            try:
+                from langfuse.callback import CallbackHandler
+                cb = CallbackHandler(
+                    public_key=config.LANGFUSE_PUBLIC_KEY,
+                    secret_key=config.LANGFUSE_SECRET_KEY,
+                    host=config.LANGFUSE_HOST,
+                    trace_id=trace_id or str(uuid.uuid4()),
+                    tags=["manual-direct"]
+                )
+                local_callbacks = [cb]
+            except Exception as e:
+                print(f"Error initializing fallback Langfuse Callback: {e}")
+
         try:
             llm = ChatOpenAI(
                 model="gpt-4o-mini",
@@ -450,7 +477,7 @@ class OpenAIDirectClient(BaseLLMClient):
             )
             structured_llm = llm.with_structured_output(schema)
             
-            config_dict = {"callbacks": callbacks} if callbacks else {}
+            config_dict = {"callbacks": local_callbacks} if local_callbacks else {}
             
             response = await asyncio.to_thread(
                 structured_llm.invoke,
@@ -476,6 +503,212 @@ class OpenAIDirectClient(BaseLLMClient):
             else:
                 _debug_log_llm(task, self.provider_name, self.model_name, prompt, schema, success=False, error_category="unknown", error_message=str(e))
                 raise LLMError("unknown", f"OpenAI API error: {str(e)}")
+        finally:
+            if local_callbacks:
+                for cb in local_callbacks:
+                    if hasattr(cb, "langfuse") and hasattr(cb.langfuse, "flush"):
+                        try:
+                            cb.langfuse.flush()
+                        except Exception:
+                            pass
+
+
+# ---------------------------------------------------------------------------
+# OpenRouter client (OpenAI-compatible API with free model fallback)
+# ---------------------------------------------------------------------------
+
+class OpenRouterClient(BaseLLMClient):
+    """Uses OpenRouter API (OpenAI-compatible) with free model fallback chain."""
+
+    provider_name = "openrouter"
+    model_name = "meta-llama/llama-3.3-70b-instruct:free"
+
+    # Fallback chain: try free models in order
+    FALLBACK_MODELS = [
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "openai/gpt-oss-120b:free",
+        "qwen/qwen3-coder:free",
+    ]
+
+    async def run_json(
+        self,
+        task: str,
+        prompt: str,
+        schema: type[BaseModel],
+        is_retry: bool = False,
+        trace_id: str = "",
+        callbacks: Optional[List[Any]] = None,
+    ) -> BaseModel:
+        if not config.OPENROUTER_API_KEY:
+            raise LLMError("auth_lost", "OPENROUTER_API_KEY is not configured.")
+
+        from openai import OpenAI
+
+        # Build JSON schema instruction from Pydantic model
+        schema_fields = schema.schema()
+        schema_instruction = json.dumps(schema_fields, indent=2)
+
+        full_prompt = (
+            f"Task: {task}\n\n"
+            f"{prompt}\n\n"
+            "Return ONLY valid JSON matching this schema:\n"
+            f"{schema_instruction}\n\n"
+            "Output ONLY the JSON object, no markdown fences, no extra text."
+        )
+
+        # Try each model in the fallback chain
+        models_to_try = list(self.FALLBACK_MODELS)
+        # If a custom model is configured, put it first
+        custom_model = config.OPENROUTER_MODEL
+        if custom_model and custom_model not in models_to_try:
+            models_to_try.insert(0, custom_model)
+
+        last_error = None
+        for model_id in models_to_try:
+            # Initialize manual Langfuse trace generation
+            lf_generation = None
+            lf = get_langfuse_client()
+            if lf:
+                if not trace_id:
+                    trace_id = str(uuid.uuid4())
+                try:
+                    lf_generation = lf.generation(
+                        trace_id=trace_id,
+                        name=f"openrouter-{task}",
+                        model=model_id,
+                        input=full_prompt,
+                    )
+                except Exception as e:
+                    print(f"Error starting manual Langfuse generation: {e}")
+
+            try:
+                client = OpenAI(
+                    base_url=config.OPENROUTER_BASE_URL,
+                    api_key=config.OPENROUTER_API_KEY,
+                    default_headers={
+                        "HTTP-Referer": "https://paper-helper-agent.local",
+                        "X-Title": "Paper Helper Agent",
+                    },
+                )
+
+                response = await asyncio.to_thread(
+                    client.chat.completions.create,
+                    model=model_id,
+                    messages=[
+                        {"role": "system", "content": f"You are a structured JSON assistant. Task: {task}"},
+                        {"role": "user", "content": full_prompt},
+                    ],
+                    temperature=0,
+                    max_tokens=2048,
+                )
+
+                response_text = response.choices[0].message.content.strip()
+                actual_model = model_id
+
+                # Strip markdown fences if present
+                if response_text.startswith("```"):
+                    lines = response_text.split("\n")
+                    lines = [l for l in lines if not l.strip().startswith("```")]
+                    response_text = "\n".join(lines).strip()
+
+                try:
+                    json_data = json.loads(response_text)
+                except json.JSONDecodeError as je:
+                    _debug_log_llm(
+                        task, self.provider_name, actual_model, prompt, schema,
+                        raw_response=response_text, success=False,
+                        error_category="invalid_json", error_message=str(je),
+                    )
+                    if not is_retry:
+                        repair_prompt = (
+                            "The previous output was invalid JSON. "
+                            "Please repair and output valid JSON matching the schema.\n\n"
+                            f"Original Prompt:\n{prompt}\n\n"
+                            f"Invalid Output:\n{response_text}"
+                        )
+                        return await self.run_json(task, repair_prompt, schema, is_retry=True, trace_id=trace_id, callbacks=callbacks)
+                    raise LLMError(
+                        "invalid_json", f"OpenRouter JSON parse failed: {str(je)}"
+                    )
+
+                try:
+                    parsed = schema.model_validate(json_data)
+                    # Log success to Langfuse
+                    if lf_generation:
+                        try:
+                            usage = {}
+                            if response.usage:
+                                usage = {
+                                    "input": response.usage.prompt_tokens,
+                                    "output": response.usage.completion_tokens,
+                                    "total": response.usage.total_tokens,
+                                }
+                            lf_generation.end(
+                                output=response_text,
+                                metadata={
+                                    "status": "success",
+                                    "provider": "openrouter",
+                                    "model": actual_model,
+                                },
+                                usage=usage,
+                            )
+                            flush_langfuse()
+                        except Exception as e:
+                            print(f"Error ending manual Langfuse generation: {e}")
+                    _debug_log_llm(
+                        task, self.provider_name, actual_model, prompt, schema,
+                        raw_response=response_text, parsed_response=parsed, success=True,
+                    )
+                    self.model_name = actual_model  # Track which model was actually used
+                    return parsed
+                except Exception as ve:
+                    _debug_log_llm(
+                        task, self.provider_name, actual_model, prompt, schema,
+                        raw_response=response_text, success=False,
+                        error_category="invalid_json", error_message=str(ve),
+                    )
+                    raise LLMError(
+                        "invalid_json", f"OpenRouter Pydantic validation failed: {str(ve)}"
+                    )
+
+            except LLMError:
+                raise
+            except Exception as e:
+                err_str = str(e).lower()
+                category = "unknown"
+                if "rate limit" in err_str or "429" in err_str:
+                    category = "rate_limit"
+                elif any(kw in err_str for kw in ["api key", "auth", "permission", "403", "401"]):
+                    category = "auth_lost"
+                elif "timeout" in err_str:
+                    category = "timeout"
+
+                if lf_generation:
+                    try:
+                        lf_generation.end(
+                            output=str(e),
+                            metadata={"status": "failed", "error_category": category, "model": model_id},
+                        )
+                        flush_langfuse()
+                    except Exception:
+                        pass
+
+                print(f"[OpenRouter] Model '{model_id}' failed: [{category}] {e}")
+                last_error = LLMError(category, f"OpenRouter ({model_id}): {str(e)}")
+
+                # If rate_limit or timeout, try next model in fallback chain
+                if category in ("rate_limit", "timeout"):
+                    continue
+                # For auth errors, no point trying other models
+                if category == "auth_lost":
+                    raise last_error
+                # For unknown errors, try next model
+                continue
+
+        # All models in fallback chain failed
+        if last_error:
+            raise last_error
+        raise LLMError("unknown", "OpenRouter: all models in fallback chain failed.")
 
 
 # ---------------------------------------------------------------------------
@@ -581,7 +814,8 @@ class LocalRuleClient(BaseLLMClient):
             query_lower = query.lower().strip()
             rag_keywords = [
                 "policy", "travel", "allowance", "hybrid", "schedule", "equipment", 
-                "macbook", "laptop", "refresh", "reimburse", "meals", "office", "work"
+                "macbook", "laptop", "refresh", "reimburse", "meals", "office", "work",
+                "section", "page", "document", "pdf", "file", "author", "paper", "writeup", "text"
             ]
             is_rag = any(kw in query_lower for kw in rag_keywords)
             route_val = "rag" if is_rag else "general"
@@ -602,6 +836,7 @@ _PROVIDER_REGISTRY = {
     "codex": CodexCliClient,
     "gemini": GeminiClient,
     "openai": OpenAIDirectClient,
+    "openrouter": OpenRouterClient,
     "mock": MockLLMClient,
     "local": LocalRuleClient,
 }

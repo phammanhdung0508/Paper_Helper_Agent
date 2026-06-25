@@ -71,12 +71,18 @@ from unittest.mock import patch, MagicMock
 
 def test_feedback_success_mocked():
     """Verify that feedback is successfully logged when trace_id and credentials are present."""
-    with patch("main.config") as mock_config:
-        mock_config.LANGFUSE_PUBLIC_KEY = "pk-mock"
-        mock_config.LANGFUSE_SECRET_KEY = "sk-mock"
-        mock_config.LANGFUSE_HOST = "http://localhost:3000"
+    with patch("main.config") as mock_config_main, \
+         patch("app.observability.config") as mock_config_obs:
+         
+        for mock_config in (mock_config_main, mock_config_obs):
+            mock_config.LANGFUSE_PUBLIC_KEY = "pk-mock"
+            mock_config.LANGFUSE_SECRET_KEY = "sk-mock"
+            mock_config.LANGFUSE_HOST = "http://localhost:3000"
         
-        with patch("langfuse.Langfuse") as mock_langfuse_class:
+        import app.observability
+        app.observability._langfuse_client = None
+        
+        with patch("app.observability.Langfuse") as mock_langfuse_class:
             mock_lf = MagicMock()
             mock_langfuse_class.return_value = mock_lf
             
@@ -97,63 +103,74 @@ def test_feedback_success_mocked():
 
 def test_chat_trace_callback_generation():
     """Verify that CallbackHandler is initialized and updated during chat when keys are configured."""
-    with patch("main.config") as mock_config, \
+    with patch("main.config") as mock_config_main, \
+         patch("app.observability.config") as mock_config_obs, \
          patch("app.supervisor.supervisor") as mock_supervisor, \
          patch("main.database.add_chat_message") as mock_add_msg, \
-         patch("langfuse.callback.CallbackHandler") as mock_callback_handler, \
-         patch("langfuse.Langfuse") as mock_langfuse_class:
+         patch("langfuse.callback.CallbackHandler") as mock_callback_handler:
          
-        mock_config.LANGFUSE_PUBLIC_KEY = "pk-mock"
-        mock_config.LANGFUSE_SECRET_KEY = "sk-mock"
-        mock_config.LANGFUSE_HOST = "http://localhost:3000"
+        for mock_config in (mock_config_main, mock_config_obs):
+            mock_config.LANGFUSE_PUBLIC_KEY = "pk-mock"
+            mock_config.LANGFUSE_SECRET_KEY = "sk-mock"
+            mock_config.LANGFUSE_HOST = "http://localhost:3000"
+         
+        import app.observability
+        app.observability._langfuse_client = None
         
-        mock_supervisor.route_and_execute.return_value = {
-            "ai_reply": "Hello AI response",
-            "route_taken": "general"
-        }
-        
-        mock_lf = MagicMock()
-        mock_langfuse_class.return_value = mock_lf
-        
-        req = ChatRequest(
-            query="Hello",
-            chat_history=[],
-            doc_id="doc-123",
-            session_id="session-456"
-        )
-        res = run_agent_chat(req)
-        
-        # Verify CallbackHandler was initialized with trace info
-        mock_callback_handler.assert_called_once()
-        kwargs = mock_callback_handler.call_args[1]
-        assert kwargs["trace_id"] == res.trace_id
-        assert kwargs["session_id"] == "session-456"
-        assert kwargs["public_key"] == "pk-mock"
-        assert kwargs["secret_key"] == "sk-mock"
-        
-        # Verify Langfuse was initialized and trace metadata was updated with route_taken
-        mock_langfuse_class.assert_called_once_with(
-            public_key="pk-mock",
-            secret_key="sk-mock",
-            host="http://localhost:3000"
-        )
-        mock_lf.trace.assert_called_once_with(id=res.trace_id)
-        mock_lf.trace(id=res.trace_id).update.assert_called_once_with(
-            metadata={
-                "session_id": "session-456",
-                "user_id": "default_student_501",
+        with patch("app.observability.Langfuse") as mock_langfuse_class:
+            mock_supervisor.route_and_execute.return_value = {
+                "ai_reply": "Hello AI response",
                 "route_taken": "general"
             }
-        )
+            
+            mock_lf = MagicMock()
+            mock_langfuse_class.return_value = mock_lf
+            
+            req = ChatRequest(
+                query="Hello",
+                chat_history=[],
+                doc_id="doc-123",
+                session_id="session-456"
+            )
+            res = run_agent_chat(req)
+            
+            # Verify CallbackHandler was initialized with trace info
+            mock_callback_handler.assert_called_once()
+            kwargs = mock_callback_handler.call_args[1]
+            assert kwargs["trace_id"] == res.trace_id
+            assert kwargs["session_id"] == "session-456"
+            assert kwargs["public_key"] == "pk-mock"
+            assert kwargs["secret_key"] == "sk-mock"
+            
+            # Verify Langfuse was initialized and trace metadata was updated with route_taken
+            mock_langfuse_class.assert_called_once_with(
+                public_key="pk-mock",
+                secret_key="sk-mock",
+                host="http://localhost:3000"
+            )
+            mock_lf.trace.assert_called_once_with(id=res.trace_id)
+            mock_lf.trace(id=res.trace_id).update.assert_called_once_with(
+                metadata={
+                    "session_id": "session-456",
+                    "user_id": "default_student_501",
+                    "route_taken": "general"
+                }
+            )
 
 def test_host_validation_boundaries():
     """Test boundary checks on host validation errors."""
-    with patch("main.config") as mock_config:
-        mock_config.LANGFUSE_PUBLIC_KEY = "pk-mock"
-        mock_config.LANGFUSE_SECRET_KEY = "sk-mock"
-        mock_config.LANGFUSE_HOST = ""
+    with patch("main.config") as mock_config_main, \
+         patch("app.observability.config") as mock_config_obs:
+         
+        for mock_config in (mock_config_main, mock_config_obs):
+            mock_config.LANGFUSE_PUBLIC_KEY = "pk-mock"
+            mock_config.LANGFUSE_SECRET_KEY = "sk-mock"
+            mock_config.LANGFUSE_HOST = ""
         
-        with patch("langfuse.Langfuse", side_effect=ValueError("Invalid Host URL")):
+        import app.observability
+        app.observability._langfuse_client = None
+        
+        with patch("app.observability.Langfuse", side_effect=ValueError("Invalid Host URL")):
             req = FeedbackRequest(rating="up", trace_id="some-trace-id")
             with pytest.raises(HTTPException) as exc_info:
                 log_chat_feedback(req)

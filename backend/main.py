@@ -12,6 +12,7 @@ from app import database
 from app import graph
 from app import visualizer
 from app.agents import ConceptGraphAgent, VisualSandboxAgent, MasteryEvaluatorAgent
+from app.observability import get_langfuse_client, flush_langfuse
 
 _backend_dir = os.path.dirname(os.path.abspath(__file__))
 _project_root = os.path.dirname(_backend_dir)
@@ -389,14 +390,9 @@ def run_agent_chat(payload: ChatRequest):
         database.add_chat_message(session_id, "assistant", ai_reply, trace_id)
         
         # Attach route_taken metadata via SDK trace update
-        if config.LANGFUSE_PUBLIC_KEY and config.LANGFUSE_SECRET_KEY:
+        lf = get_langfuse_client()
+        if lf:
             try:
-                from langfuse import Langfuse
-                lf = Langfuse(
-                    public_key=config.LANGFUSE_PUBLIC_KEY,
-                    secret_key=config.LANGFUSE_SECRET_KEY,
-                    host=config.LANGFUSE_HOST
-                )
                 lf.trace(id=trace_id).update(
                     metadata={
                         "session_id": session_id,
@@ -404,6 +400,7 @@ def run_agent_chat(payload: ChatRequest):
                         "route_taken": route_taken
                     }
                 )
+                flush_langfuse()
             except Exception as e:
                 print(f"Error updating Langfuse trace metadata: {e}")
                 
@@ -416,22 +413,18 @@ def log_chat_feedback(payload: FeedbackRequest):
     if not payload.trace_id:
         raise HTTPException(status_code=400, detail="trace_id is required")
         
-    if not config.LANGFUSE_PUBLIC_KEY or not config.LANGFUSE_SECRET_KEY:
-        return FeedbackResponse(status="Offline: Langfuse credentials not set")
-        
     try:
-        from langfuse import Langfuse
-        lf = Langfuse(
-            public_key=config.LANGFUSE_PUBLIC_KEY,
-            secret_key=config.LANGFUSE_SECRET_KEY,
-            host=config.LANGFUSE_HOST
-        )
+        lf = get_langfuse_client()
+        if not lf:
+            return FeedbackResponse(status="Offline: Langfuse credentials not set")
+            
         score_value = 1.0 if payload.rating == "up" else 0.0
         lf.score(
             trace_id=payload.trace_id,
             name="helpfulness",
             value=score_value
         )
+        flush_langfuse()
         return FeedbackResponse(status=f"Feedback logged successfully: {payload.rating}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
