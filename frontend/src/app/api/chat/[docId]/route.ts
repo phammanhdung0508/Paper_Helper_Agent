@@ -143,7 +143,7 @@ export async function POST(
       try {
         const { data, threadId } = await runJsonInThread<ChatReplyResult>({
           outputSchema: chatReplySchema,
-          opts: { reasoning: "low" },
+          opts: { reasoning: "low", debugTask: "chat:reply" },
           resume: { threadId: chat.codexThreadId, input: turnInput },
         });
         reply = data;
@@ -167,7 +167,7 @@ export async function POST(
       )}\n\n--- ASSISTANT REPLY ---\nReply now as ASSISTANT. Output JSON.`;
       const { data, threadId } = await runJsonInThread<ChatReplyResult>({
         outputSchema: chatReplySchema,
-        opts: { reasoning: "low" },
+        opts: { reasoning: "low", debugTask: "chat:reply" },
         start: { input: fullInput },
       });
       reply = data;

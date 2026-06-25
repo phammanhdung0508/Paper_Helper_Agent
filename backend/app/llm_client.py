@@ -50,6 +50,52 @@ FALLBACK_CATEGORIES = {
 }
 
 
+def _prompt_hash(task: str, prompt: str, schema: type[BaseModel]) -> str:
+    return hashlib.sha256(f"{task}:{prompt}:{schema.__name__}".encode()).hexdigest()[:32]
+
+
+def _debug_log_llm(
+    task: str,
+    provider: str,
+    model: str,
+    prompt: str,
+    schema: type[BaseModel],
+    raw_response: Any = None,
+    parsed_response: Any = None,
+    success: bool = False,
+    error_category: str = None,
+    error_message: str = None,
+    cache_hit: bool = False,
+):
+    if not config.ENABLE_LLM_DEBUG_LOG:
+        return
+    try:
+        parsed_text = None
+        if parsed_response is not None:
+            if hasattr(parsed_response, "model_dump_json"):
+                parsed_text = parsed_response.model_dump_json()
+            elif hasattr(parsed_response, "dict"):
+                parsed_text = json.dumps(parsed_response.dict(), ensure_ascii=False)
+            else:
+                parsed_text = json.dumps(parsed_response, ensure_ascii=False, default=str)
+        from app import database
+        database.log_llm_debug(
+            task=task,
+            provider=provider,
+            model=model,
+            prompt_hash=_prompt_hash(task, prompt, schema),
+            prompt=prompt,
+            raw_response=raw_response,
+            parsed_response=parsed_text,
+            success=success,
+            error_category=error_category,
+            error_message=error_message,
+            cache_hit=cache_hit,
+        )
+    except Exception as e:
+        print(f"LLM debug hook failed: {e}")
+
+
 # ---------------------------------------------------------------------------
 # Base client interface
 # ---------------------------------------------------------------------------
@@ -156,6 +202,11 @@ class CodexCliClient(BaseLLMClient):
             try:
                 json_data = json.loads(stdout_str)
             except json.JSONDecodeError as je:
+                _debug_log_llm(
+                    task, self.provider_name, self.model_name, prompt, schema,
+                    raw_response=stdout_str, success=False,
+                    error_category="invalid_json", error_message=str(je),
+                )
                 if not is_retry:
                     repair_prompt = (
                         "The previous output was invalid JSON. "
@@ -170,6 +221,7 @@ class CodexCliClient(BaseLLMClient):
 
             try:
                 # Successfully executed
+                parsed = schema.model_validate(json_data)
                 if lf_generation:
                     try:
                         lf_generation.update(
@@ -178,8 +230,17 @@ class CodexCliClient(BaseLLMClient):
                         )
                     except Exception:
                         pass
-                return schema.model_validate(json_data)
+                _debug_log_llm(
+                    task, self.provider_name, self.model_name, prompt, schema,
+                    raw_response=stdout_str, parsed_response=parsed, success=True,
+                )
+                return parsed
             except Exception as ve:
+                _debug_log_llm(
+                    task, self.provider_name, self.model_name, prompt, schema,
+                    raw_response=stdout_str, success=False,
+                    error_category="invalid_json", error_message=str(ve),
+                )
                 raise LLMError(
                     "invalid_json", f"Pydantic validation failed: {str(ve)}"
                 )
@@ -285,6 +346,11 @@ class GeminiClient(BaseLLMClient):
             try:
                 json_data = json.loads(response_text)
             except json.JSONDecodeError as je:
+                _debug_log_llm(
+                    task, self.provider_name, self.model_name, prompt, schema,
+                    raw_response=response_text, success=False,
+                    error_category="invalid_json", error_message=str(je),
+                )
                 if not is_retry:
                     repair_prompt = (
                         "The previous output was invalid JSON. "
@@ -298,6 +364,7 @@ class GeminiClient(BaseLLMClient):
                 )
 
             try:
+                parsed = schema.model_validate(json_data)
                 if lf_generation:
                     try:
                         lf_generation.update(
@@ -306,8 +373,17 @@ class GeminiClient(BaseLLMClient):
                         )
                     except Exception:
                         pass
-                return schema.model_validate(json_data)
+                _debug_log_llm(
+                    task, self.provider_name, self.model_name, prompt, schema,
+                    raw_response=response_text, parsed_response=parsed, success=True,
+                )
+                return parsed
             except Exception as ve:
+                _debug_log_llm(
+                    task, self.provider_name, self.model_name, prompt, schema,
+                    raw_response=response_text, success=False,
+                    error_category="invalid_json", error_message=str(ve),
+                )
                 raise LLMError(
                     "invalid_json", f"Gemini Pydantic validation failed: {str(ve)}"
                 )
@@ -384,14 +460,21 @@ class OpenAIDirectClient(BaseLLMClient):
                 ],
                 config_dict
             )
+            _debug_log_llm(
+                task, self.provider_name, self.model_name, prompt, schema,
+                raw_response=response, parsed_response=response, success=True,
+            )
             return response
         except Exception as e:
             err_str = str(e).lower()
             if "rate limit" in err_str:
+                _debug_log_llm(task, self.provider_name, self.model_name, prompt, schema, success=False, error_category="rate_limit", error_message=str(e))
                 raise LLMError("rate_limit", f"OpenAI rate limit: {str(e)}")
             elif any(kw in err_str for kw in ["api key", "auth", "invalid key"]):
+                _debug_log_llm(task, self.provider_name, self.model_name, prompt, schema, success=False, error_category="auth_lost", error_message=str(e))
                 raise LLMError("auth_lost", f"OpenAI auth failure: {str(e)}")
             else:
+                _debug_log_llm(task, self.provider_name, self.model_name, prompt, schema, success=False, error_category="unknown", error_message=str(e))
                 raise LLMError("unknown", f"OpenAI API error: {str(e)}")
 
 
@@ -568,9 +651,7 @@ class LLMRouterClient(BaseLLMClient):
         trace_id: str = "",
         callbacks: Optional[List[Any]] = None,
     ) -> BaseModel:
-        prompt_hash = hashlib.sha256(
-            f"{task}:{prompt}:{schema.__name__}".encode()
-        ).hexdigest()[:32]
+        prompt_hash = _prompt_hash(task, prompt, schema)
 
         # 1. Check cache
         cached = self._cache_lookup(task, prompt_hash, schema.__name__)
@@ -578,7 +659,13 @@ class LLMRouterClient(BaseLLMClient):
             self._log_call(task, "cache", True, 0, None, cache_hit=True)
             print(f"[LLM Router] Cache hit for task '{task}'. Skipping provider call.")
             try:
-                return schema.model_validate(json.loads(cached))
+                parsed = schema.model_validate(json.loads(cached))
+                _debug_log_llm(
+                    task, "cache", "cache", prompt, schema,
+                    raw_response=cached, parsed_response=parsed,
+                    success=True, cache_hit=True,
+                )
+                return parsed
             except Exception:
                 pass  # Cache entry invalid, proceed to providers
 

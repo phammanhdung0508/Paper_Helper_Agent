@@ -15,6 +15,7 @@ LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "http://localhost:3000")
 
 # LLM Routing Config
 ENABLE_LLM_FALLBACK = os.getenv("ENABLE_LLM_FALLBACK", "true").lower() in ("true", "1", "yes")
+ENABLE_LLM_DEBUG_LOG = os.getenv("ENABLE_LLM_DEBUG_LOG", "false").lower() in ("true", "1", "yes")
 LLM_ROUTER_PROVIDER = os.getenv("LLM_ROUTER_PROVIDER", "local,gemini,codex")
 LLM_GENERAL_PROVIDER = os.getenv("LLM_GENERAL_PROVIDER", "gemini,codex")
 LLM_RAG_PROVIDER = os.getenv("LLM_RAG_PROVIDER", "codex,gemini")

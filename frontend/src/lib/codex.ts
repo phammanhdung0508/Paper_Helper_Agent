@@ -18,6 +18,7 @@
 import { Codex } from "@openai/codex-sdk";
 import type { ThreadOptions } from "@openai/codex-sdk";
 import { CODEX_SCRATCH_DIR } from "./paths";
+import { logFrontendLLMDebug } from "./llm-debug";
 
 let _codex: Codex | null = null;
 
@@ -44,6 +45,8 @@ export type RunOptions = {
   signal?: AbortSignal;
   /** Override default thread options. */
   threadOverrides?: Partial<ThreadOptions>;
+  /** Optional debug label for raw-response logging. */
+  debugTask?: string;
 };
 
 function threadOptions(opts: RunOptions = {}): ThreadOptions {
@@ -264,17 +267,39 @@ export async function runJson<T>(
   let lastErr: unknown = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     const thread = buildThread(opts);
+    let rawResponse: string | undefined;
     try {
       const turn = await thread.run(prompt, {
         outputSchema,
         signal: opts.signal,
       });
-      const parsed = parseTurnJson<T>(turn.finalResponse);
+      rawResponse = turn.finalResponse;
+      const parsed = parseTurnJson<T>(rawResponse);
       markOk();
+      logFrontendLLMDebug({
+        task: opts.debugTask ?? "codex.runJson",
+        mode: "single",
+        threadId: thread.id,
+        prompt,
+        rawResponse,
+        parsedResponse: parsed,
+        success: true,
+        usage: turn.usage,
+      });
       return { data: parsed, usage: turn.usage };
     } catch (err) {
       lastErr = err;
       const classified = classifyCodexError(err);
+      logFrontendLLMDebug({
+        task: opts.debugTask ?? "codex.runJson",
+        mode: "single",
+        threadId: thread.id,
+        prompt,
+        rawResponse,
+        success: false,
+        errorKind: classified.kind,
+        errorMessage: classified.message,
+      });
       // Auth/rate-limit/binary failures: don't bother retrying — the
       // condition isn't going to clear in 200ms. Bubble up immediately so
       // the in-app banner can take over.
@@ -319,16 +344,38 @@ export async function runJsonInThread<T>(args: {
 
   if (args.resume) {
     const thread = getCodex().resumeThread(args.resume.threadId, threadOptions(opts));
+    let rawResponse: string | undefined;
     try {
       const turn = await thread.run(args.resume.input, {
         outputSchema: args.outputSchema,
         signal: opts.signal,
       });
-      const parsed = parseTurnJson<T>(turn.finalResponse);
+      rawResponse = turn.finalResponse;
+      const parsed = parseTurnJson<T>(rawResponse);
       markOk();
+      logFrontendLLMDebug({
+        task: opts.debugTask ?? "codex.runJsonInThread",
+        mode: "resume",
+        threadId: thread.id ?? args.resume.threadId,
+        prompt: args.resume.input,
+        rawResponse,
+        parsedResponse: parsed,
+        success: true,
+        usage: turn.usage,
+      });
       return { data: parsed, usage: turn.usage, threadId: thread.id ?? args.resume.threadId };
     } catch (err) {
       const classified = classifyCodexError(err);
+      logFrontendLLMDebug({
+        task: opts.debugTask ?? "codex.runJsonInThread",
+        mode: "resume",
+        threadId: thread.id ?? args.resume.threadId,
+        prompt: args.resume.input,
+        rawResponse,
+        success: false,
+        errorKind: classified.kind,
+        errorMessage: classified.message,
+      });
       if (classified.kind !== "generic") markError(classified);
       throw classified;
     }
@@ -339,17 +386,39 @@ export async function runJsonInThread<T>(args: {
   let lastErr: unknown = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     const thread = buildThread(opts);
+    let rawResponse: string | undefined;
     try {
       const turn = await thread.run(args.start.input, {
         outputSchema: args.outputSchema,
         signal: opts.signal,
       });
-      const parsed = parseTurnJson<T>(turn.finalResponse);
+      rawResponse = turn.finalResponse;
+      const parsed = parseTurnJson<T>(rawResponse);
       markOk();
+      logFrontendLLMDebug({
+        task: opts.debugTask ?? "codex.runJsonInThread",
+        mode: "start",
+        threadId: thread.id,
+        prompt: args.start.input,
+        rawResponse,
+        parsedResponse: parsed,
+        success: true,
+        usage: turn.usage,
+      });
       return { data: parsed, usage: turn.usage, threadId: thread.id };
     } catch (err) {
       lastErr = err;
       const classified = classifyCodexError(err);
+      logFrontendLLMDebug({
+        task: opts.debugTask ?? "codex.runJsonInThread",
+        mode: "start",
+        threadId: thread.id,
+        prompt: args.start.input,
+        rawResponse,
+        success: false,
+        errorKind: classified.kind,
+        errorMessage: classified.message,
+      });
       if (classified.kind !== "generic") {
         markError(classified);
         throw classified;

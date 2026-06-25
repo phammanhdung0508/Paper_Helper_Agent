@@ -232,6 +232,7 @@ export async function generateVizSpec(args: GenerateVizArgs): Promise<VizSpec> {
     reasoning,
     webSearch,
     signal: args.signal,
+    debugTask: `generate_viz:${args.type}`,
   });
 
   // Server-side syntax pre-flight for code-emitting types — silent repair
@@ -246,6 +247,7 @@ export async function generateVizSpec(args: GenerateVizArgs): Promise<VizSpec> {
           reasoning: "medium",
           webSearch: false,
           signal: args.signal,
+          debugTask: `repair_viz:${args.type}`,
         });
         const fixedCode = specCodeOrNull(fixed);
         if (fixedCode && !syntaxCheck(fixedCode)) {

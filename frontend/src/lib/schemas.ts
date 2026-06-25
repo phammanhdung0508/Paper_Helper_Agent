@@ -111,7 +111,7 @@ export type TwoDAnimSpec = {
   title: string;
   caption: string;
   /** Body of a function with signature
-   *    function setup({ ctx, width, height }) { ...; return { draw(ctx, width, height, time, dt) { ... } } }
+   *    function setup({ ctx, layout, width, height }) { ...; return { draw(ctx, width, height, time, dt) { ... } } }
    *  The draw callback is called every frame.
    */
   setup_code: string;

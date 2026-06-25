@@ -6,6 +6,7 @@ import pypdf
 from typing import List, Dict, Any, Tuple
 import json
 import warnings
+import re
 
 from app import config
 
@@ -154,6 +155,26 @@ def db_init():
         success INTEGER NOT NULL,
         latency_ms INTEGER NOT NULL,
         error_category TEXT,
+        cache_hit INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    # Create opt-in raw LLM debug log table. Prompt/response text is only
+    # written when ENABLE_LLM_DEBUG_LOG is enabled.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS llm_debug_log (
+        id TEXT PRIMARY KEY,
+        task TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT,
+        prompt_hash TEXT,
+        prompt TEXT,
+        raw_response TEXT,
+        parsed_response TEXT,
+        success INTEGER NOT NULL,
+        error_category TEXT,
+        error_message TEXT,
         cache_hit INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
@@ -528,3 +549,62 @@ def log_llm_call(task: str, provider: str, success: bool, latency_ms: int, error
     """, (log_id, task, provider, int(success), latency_ms, error_category, int(cache_hit)))
     conn.commit()
     conn.close()
+
+_SECRET_PATTERNS = [
+    re.compile(r"(OPENAI_API_KEY|GEMINI_API_KEY|LANGFUSE_SECRET_KEY)\s*=\s*[^\s]+", re.IGNORECASE),
+    re.compile(r"Bearer\s+[A-Za-z0-9._\-]+", re.IGNORECASE),
+    re.compile(r"sk-[A-Za-z0-9_\-]{12,}"),
+    re.compile(r"gho_[A-Za-z0-9_]{12,}"),
+]
+
+def _redact_llm_debug_text(value):
+    if value is None:
+        return None
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub(lambda m: m.group(0).split("=")[0] + "=[REDACTED]" if "=" in m.group(0) else "[REDACTED]", text)
+    return text
+
+def log_llm_debug(
+    task: str,
+    provider: str,
+    model: str = None,
+    prompt_hash: str = None,
+    prompt: str = None,
+    raw_response: str = None,
+    parsed_response: str = None,
+    success: bool = False,
+    error_category: str = None,
+    error_message: str = None,
+    cache_hit: bool = False,
+):
+    """Best-effort opt-in raw LLM debug logging."""
+    if not config.ENABLE_LLM_DEBUG_LOG:
+        return
+    try:
+        log_id = str(uuid.uuid4())
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+        INSERT INTO llm_debug_log (
+            id, task, provider, model, prompt_hash, prompt, raw_response,
+            parsed_response, success, error_category, error_message, cache_hit
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            log_id,
+            task,
+            provider,
+            model,
+            prompt_hash,
+            _redact_llm_debug_text(prompt),
+            _redact_llm_debug_text(raw_response),
+            _redact_llm_debug_text(parsed_response),
+            int(success),
+            error_category,
+            _redact_llm_debug_text(error_message),
+            int(cache_hit),
+        ))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"LLM debug logging failed: {e}")
