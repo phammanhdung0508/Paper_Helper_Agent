@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import type { VizType } from "@/lib/schemas";
 import { VIZ_TYPE_META, vizTypeStyle } from "@/components/Visualizer/viz-meta";
-import { getDocument, GlobalWorkerOptions } from "pdfjs-dist/legacy/build/pdf.js";
+import { getDocument, GlobalWorkerOptions, renderTextLayer } from "pdfjs-dist/legacy/build/pdf.js";
 import type { PDFDocumentProxy } from "pdfjs-dist/types/src/display/api";
 
 if (typeof window !== "undefined") {
@@ -367,39 +367,72 @@ function PdfPage({
   onTagClick: (id: string) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const textLayerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!pdfDoc || !scale || !canvasRef.current) return;
     let cancelled = false;
     let renderTask: { promise: Promise<void>; cancel: () => void } | null = null;
+    let textLayerTask: { promise: Promise<void>; cancel: () => void } | null = null;
+    
     (async () => {
       const canvas = canvasRef.current;
+      const textLayerDiv = textLayerRef.current;
       if (!canvas) return;
+      
       const dpr = Math.min(window.devicePixelRatio, 2);
       const page = await pdfDoc.getPage(pageNumber);
       if (cancelled) {
         page.cleanup();
         return;
       }
-      const viewport = page.getViewport({ scale: scale * dpr });
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      canvas.style.width = `${viewport.width / dpr}px`;
-      canvas.style.height = `${viewport.height / dpr}px`;
+      
+      // Render page canvas
+      const viewportCanvas = page.getViewport({ scale: scale * dpr });
+      canvas.width = viewportCanvas.width;
+      canvas.height = viewportCanvas.height;
+      canvas.style.width = `${viewportCanvas.width / dpr}px`;
+      canvas.style.height = `${viewportCanvas.height / dpr}px`;
+      
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
-      renderTask = page.render({ canvasContext: ctx, viewport });
+      
+      renderTask = page.render({ canvasContext: ctx, viewport: viewportCanvas });
       try {
         await renderTask.promise;
       } catch {
         /* cancelled */
       }
+      
+      // Render page text layer
+      if (textLayerDiv && !cancelled) {
+        textLayerDiv.innerHTML = "";
+        try {
+          const textContent = await page.getTextContent();
+          if (cancelled) return;
+          
+          const viewportText = page.getViewport({ scale: scale });
+          textLayerTask = renderTextLayer({
+            textContentSource: textContent,
+            container: textLayerDiv,
+            viewport: viewportText,
+          });
+          await textLayerTask.promise;
+        } catch (err) {
+          console.error("Error rendering text layer:", err);
+        }
+      }
+      
       page.cleanup();
     })();
+    
     return () => {
       cancelled = true;
       try {
         renderTask?.cancel();
+      } catch {}
+      try {
+        textLayerTask?.cancel();
       } catch {}
     };
   }, [pdfDoc, pageNumber, scale]);
@@ -414,8 +447,18 @@ function PdfPage({
       }}
     >
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
+      {/* Text layer for selection and interactivity */}
+      <div
+        ref={textLayerRef}
+        className="textLayer absolute inset-0 overflow-hidden"
+        style={{
+          width: pdfWidth * scale,
+          height: pdfHeight * scale,
+          "--scale-factor": scale,
+        } as React.CSSProperties}
+      />
       {/* Tag overlay layer */}
-      <div className="pointer-events-none absolute inset-0">
+      <div className="pointer-events-none absolute inset-0 z-10">
         {tags.map((t) => (
           <TagPill
             key={t.id}
