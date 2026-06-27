@@ -134,7 +134,7 @@ Ask the next child prompt. JSON only.`;
   const { data } = await runJson<FeynmanChildPromptResult>(
     prompt,
     feynmanChildPromptSchema,
-    { reasoning: "low" },
+    { reasoning: "low", task: "feynman_gen" },
   );
   return data.childPrompt.trim();
 }
@@ -150,6 +150,7 @@ ${renderTranscript(session.turns)}
 Write the summary. JSON only.`;
   const { data } = await runJson<FeynmanSummaryResult>(prompt, feynmanSummarySchema, {
     reasoning: "medium",
+    task: "feynman_gen",
   });
   return data.summary.trim();
 }

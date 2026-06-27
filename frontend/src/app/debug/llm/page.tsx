@@ -45,6 +45,8 @@ export default function LLMDebugPage() {
                   <th className="px-3 py-2 font-medium">Time</th>
                   <th className="px-3 py-2 font-medium">Task</th>
                   <th className="px-3 py-2 font-medium">Mode</th>
+                  <th className="px-3 py-2 font-medium">Provider / Model</th>
+                  <th className="px-3 py-2 font-medium">Codex Fallback</th>
                   <th className="px-3 py-2 font-medium">Status</th>
                   <th className="px-3 py-2 font-medium">Prompt</th>
                   <th className="px-3 py-2 font-medium">Raw Response</th>
@@ -53,7 +55,7 @@ export default function LLMDebugPage() {
               <tbody>
                 {entries.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-3 py-6 text-center text-[var(--ink-400)]">
+                    <td colSpan={8} className="px-3 py-6 text-center text-[var(--ink-400)]">
                       No debug entries yet.
                     </td>
                   </tr>
@@ -65,6 +67,12 @@ export default function LLMDebugPage() {
                     </td>
                     <td className="px-3 py-2 font-medium">{entry.task}</td>
                     <td className="px-3 py-2 text-[var(--ink-500)]">{entry.mode ?? "-"}</td>
+                    <td className="px-3 py-2 text-[var(--ink-500)]">
+                      {entry.provider && entry.model ? `${entry.provider} (${entry.model})` : entry.provider ?? entry.model ?? "-"}
+                    </td>
+                    <td className="px-3 py-2 text-[var(--ink-500)]">
+                      {entry.codexFallbackUsed ? `Yes (${entry.fallbackReason ?? "error"})` : "No"}
+                    </td>
                     <td className="px-3 py-2">
                       <span className={entry.success ? "text-emerald-700" : "text-rose-700"}>
                         {entry.success ? "success" : entry.errorKind ?? "failed"}

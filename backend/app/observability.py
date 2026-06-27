@@ -1,4 +1,5 @@
 import os
+import threading
 from typing import Optional, Any
 from langfuse import Langfuse
 from app import config
@@ -19,10 +20,13 @@ def get_langfuse_client() -> Optional[Any]:
     return _langfuse_client
 
 def flush_langfuse():
-    """Flushes the global Langfuse client queue."""
+    """Flushes the global Langfuse client queue without blocking request paths."""
     lf = get_langfuse_client()
     if lf:
-        try:
-            lf.flush()
-        except Exception as e:
-            print(f"Error flushing Langfuse: {e}")
+        def _flush():
+            try:
+                lf.flush()
+            except Exception as e:
+                print(f"Error flushing Langfuse: {e}")
+
+        threading.Thread(target=_flush, daemon=True).start()

@@ -113,7 +113,7 @@ export async function POST(
     const { data } = await runJson<FlashcardsGenerateResult>(
       generationPrompt(docId, topic),
       flashcardsGenerateSchema,
-      { reasoning: "low" },
+      { reasoning: "low", task: "flashcards_gen" },
     );
     const session: FlashcardSession = {
       id: newId(),

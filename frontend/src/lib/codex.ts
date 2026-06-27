@@ -17,8 +17,11 @@
 
 import { Codex } from "@openai/codex-sdk";
 import type { ThreadOptions } from "@openai/codex-sdk";
+import { Langfuse } from "langfuse";
 import { CODEX_SCRATCH_DIR } from "./paths";
-import { logFrontendLLMDebug } from "./llm-debug";
+import { logFrontendLLMDebug, redactSecrets } from "./llm-debug";
+import { readAccountInfo } from "./codex-account";
+import { runOpenRouterJson } from "./openrouter";
 
 let _codex: Codex | null = null;
 
@@ -47,6 +50,8 @@ export type RunOptions = {
   threadOverrides?: Partial<ThreadOptions>;
   /** Optional debug label for raw-response logging. */
   debugTask?: string;
+  /** Formal task classification for model routing and fallback decisions. */
+  task?: string;
 };
 
 function threadOptions(opts: RunOptions = {}): ThreadOptions {
@@ -249,6 +254,54 @@ export function classifyCodexError(err: unknown): CodexError {
   return new CodexError("generic", msg);
 }
 
+let _langfuse: Langfuse | null = null;
+function getLangfuseClient(): Langfuse | null {
+  if (_langfuse) return _langfuse;
+  const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
+  const secretKey = process.env.LANGFUSE_SECRET_KEY;
+  const baseUrl = process.env.LANGFUSE_HOST || "https://cloud.langfuse.com";
+  if (!publicKey || !secretKey) return null;
+  _langfuse = new Langfuse({ publicKey, secretKey, baseUrl });
+  return _langfuse;
+}
+
+function logToLangfuse(args: {
+  task: string;
+  prompt: string;
+  response?: string;
+  success: boolean;
+  error?: string;
+  usage?: unknown;
+}) {
+  const lf = getLangfuseClient();
+  if (!lf) return;
+  try {
+    const account = readAccountInfo();
+    const usageObj = args.usage && typeof args.usage === "object" ? (args.usage as Record<string, unknown>) : null;
+    const usage = usageObj ? {
+      promptTokens: (usageObj.promptTokens as number) || (usageObj.prompt_tokens as number) || (usageObj.input_tokens as number) || undefined,
+      completionTokens: (usageObj.completionTokens as number) || (usageObj.completion_tokens as number) || (usageObj.output_tokens as number) || undefined,
+      totalTokens: (usageObj.totalTokens as number) || (usageObj.total_tokens as number) || undefined,
+    } : undefined;
+
+    lf.generation({
+      name: `codex-${args.task}`,
+      model: "codex-cli",
+      input: redactSecrets(args.prompt),
+      output: redactSecrets(args.response || args.error),
+      usage,
+      metadata: {
+        authMode: account?.authMode ?? null,
+        planType: account?.planType ?? null,
+        status: args.success ? "success" : "failed",
+      },
+    });
+    lf.flushAsync().catch(() => {});
+  } catch (e) {
+    console.warn("Failed to log frontend trace to Langfuse:", e);
+  }
+}
+
 /**
  * Run a single turn that must return JSON conforming to the supplied schema.
  * Retries once if the model returns un-parseable text. Throws CodexError on
@@ -259,6 +312,57 @@ export async function runJson<T>(
   outputSchema: object,
   opts: RunOptions = {},
 ): Promise<{ data: T; usage: unknown }> {
+  const taskName = opts.task ?? opts.debugTask ?? "unknown";
+  const openrouterApiKey = process.env.OPENROUTER_API_KEY;
+
+  const isWebSearch = opts.webSearch === true;
+  const isFeynman = taskName === "feynman_gen" || taskName.includes("feynman");
+  const isChat = taskName.includes("chat");
+  const bypassOpenRouter = isWebSearch || isFeynman || isChat;
+
+  if (openrouterApiKey && !bypassOpenRouter) {
+    try {
+      const orResult = await runOpenRouterJson<T>(taskName, prompt, outputSchema, opts.signal);
+      logFrontendLLMDebug({
+        task: taskName,
+        provider: "openrouter",
+        model: orResult.model,
+        mode: "single",
+        prompt,
+        rawResponse: JSON.stringify(orResult.data),
+        parsedResponse: orResult.data,
+        success: true,
+        usage: orResult.usage,
+      });
+      return { data: orResult.data, usage: orResult.usage };
+    } catch (orErr: unknown) {
+      const errMsg = orErr instanceof Error ? orErr.message : String(orErr);
+      console.warn(`[OpenRouter] All models failed for task '${taskName}': ${errMsg}`);
+
+      const isBatch = taskName === "extract_knowledge_graph" || taskName === "concept_detection" || taskName.includes("detect");
+      const fallbackAllowed = isBatch
+        ? process.env.ENABLE_CODEX_FALLBACK_FOR_BATCH === "true"
+        : process.env.ENABLE_CODEX_FALLBACK_FOR_INTERACTIVE === "true";
+
+      logFrontendLLMDebug({
+        task: taskName,
+        provider: "openrouter",
+        mode: "single",
+        prompt,
+        success: false,
+        errorKind: "openrouter_failed",
+        errorMessage: errMsg,
+      });
+
+      if (!fallbackAllowed) {
+        console.warn(`[LLM Router] Codex fallback disabled for task '${taskName}' (isBatch=${isBatch}). Aborting.`);
+        throw new CodexError("rate_limit", `OpenRouter failed, and Codex fallback is disabled: ${errMsg}`);
+      }
+
+      console.log(`[LLM Router] Falling back to Codex for task '${taskName}'...`);
+    }
+  }
+
   // Short-circuit: if we know we're inside a rate-limit window, fail fast
   // without burning another Codex call.
   const preflight = preflightHealth();
@@ -276,8 +380,17 @@ export async function runJson<T>(
       rawResponse = turn.finalResponse;
       const parsed = parseTurnJson<T>(rawResponse);
       markOk();
+      logToLangfuse({
+        task: taskName,
+        prompt,
+        response: rawResponse,
+        success: true,
+        usage: turn.usage,
+      });
       logFrontendLLMDebug({
-        task: opts.debugTask ?? "codex.runJson",
+        task: taskName,
+        provider: "codex-sdk",
+        model: "codex-cli",
         mode: "single",
         threadId: thread.id,
         prompt,
@@ -290,8 +403,16 @@ export async function runJson<T>(
     } catch (err) {
       lastErr = err;
       const classified = classifyCodexError(err);
+      logToLangfuse({
+        task: taskName,
+        prompt,
+        error: classified.message,
+        success: false,
+      });
       logFrontendLLMDebug({
-        task: opts.debugTask ?? "codex.runJson",
+        task: taskName,
+        provider: "codex-sdk",
+        model: "codex-cli",
         mode: "single",
         threadId: thread.id,
         prompt,
@@ -353,6 +474,13 @@ export async function runJsonInThread<T>(args: {
       rawResponse = turn.finalResponse;
       const parsed = parseTurnJson<T>(rawResponse);
       markOk();
+      logToLangfuse({
+        task: opts.debugTask ?? "runJsonInThread-resume",
+        prompt: args.resume.input,
+        response: rawResponse,
+        success: true,
+        usage: turn.usage,
+      });
       logFrontendLLMDebug({
         task: opts.debugTask ?? "codex.runJsonInThread",
         mode: "resume",
@@ -366,6 +494,12 @@ export async function runJsonInThread<T>(args: {
       return { data: parsed, usage: turn.usage, threadId: thread.id ?? args.resume.threadId };
     } catch (err) {
       const classified = classifyCodexError(err);
+      logToLangfuse({
+        task: opts.debugTask ?? "runJsonInThread-resume",
+        prompt: args.resume.input,
+        error: classified.message,
+        success: false,
+      });
       logFrontendLLMDebug({
         task: opts.debugTask ?? "codex.runJsonInThread",
         mode: "resume",
@@ -395,6 +529,13 @@ export async function runJsonInThread<T>(args: {
       rawResponse = turn.finalResponse;
       const parsed = parseTurnJson<T>(rawResponse);
       markOk();
+      logToLangfuse({
+        task: opts.debugTask ?? "runJsonInThread-start",
+        prompt: args.start.input,
+        response: rawResponse,
+        success: true,
+        usage: turn.usage,
+      });
       logFrontendLLMDebug({
         task: opts.debugTask ?? "codex.runJsonInThread",
         mode: "start",
@@ -409,6 +550,12 @@ export async function runJsonInThread<T>(args: {
     } catch (err) {
       lastErr = err;
       const classified = classifyCodexError(err);
+      logToLangfuse({
+        task: opts.debugTask ?? "runJsonInThread-start",
+        prompt: args.start.input,
+        error: classified.message,
+        success: false,
+      });
       logFrontendLLMDebug({
         task: opts.debugTask ?? "codex.runJsonInThread",
         mode: "start",

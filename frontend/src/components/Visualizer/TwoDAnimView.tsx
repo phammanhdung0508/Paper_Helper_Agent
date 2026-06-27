@@ -57,9 +57,14 @@ export default function TwoDAnimView({ spec, onRuntimeError }: Props) {
       canvas.style.height = `${h}px`;
 
       const minLogicalWidth = 800;
-      if (w < minLogicalWidth && w > 0) {
-        scale = w / minLogicalWidth;
-        logicalW = minLogicalWidth;
+      const minLogicalHeight = 500;
+      const scaleX = w / minLogicalWidth;
+      const scaleY = h / minLogicalHeight;
+      const fitScale = Math.min(scaleX, scaleY);
+
+      if (fitScale < 1 && fitScale > 0) {
+        scale = fitScale;
+        logicalW = w / scale;
         logicalH = h / scale;
       } else {
         scale = 1;

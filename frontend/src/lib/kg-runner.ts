@@ -126,6 +126,7 @@ export async function buildKG(docId: string): Promise<KnowledgeGraph> {
       const prompt = buildPrompt(doc.filename, blobs);
       const { data } = await runJson<KGBuildResult>(prompt, kgBuildSchema, {
         reasoning: "medium",
+        task: "extract_knowledge_graph",
       });
 
       // Drop edges referencing unknown ids — the model occasionally invents one.
@@ -371,6 +372,7 @@ async function runEvaluation(docId: string): Promise<void> {
   const promptText = evaluatePrompt(kg, summariseForEvaluator(workCtx, sinceTs));
   const { data } = await runJson<KGEvaluateResult>(promptText, kgEvaluateSchema, {
     reasoning: "medium",
+    task: "evaluate_mastery_response",
   });
 
   // Apply updates with monotone clamping.

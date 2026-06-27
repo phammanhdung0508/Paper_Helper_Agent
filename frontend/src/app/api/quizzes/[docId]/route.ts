@@ -142,7 +142,7 @@ export async function POST(
     const { data } = await runJson<QuizGenerateResult>(
       generationPrompt(docId, topic),
       quizGenerateSchema,
-      { reasoning: "low" },
+      { reasoning: "low", task: "quiz_gen" },
     );
     // Defensive clamp: in case the model emits a stray correctIndex
     // outside 0..3 we treat the first option as correct rather than

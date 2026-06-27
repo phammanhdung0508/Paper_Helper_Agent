@@ -4,7 +4,7 @@ LLM Client abstraction layer with multi-provider routing, caching, and fallback.
 Architecture:
     BaseLLMClient (abstract)
       → CodexCliClient      (Codex CLI subprocess)
-      → GeminiClient         (Google Generative AI SDK)
+      → OpenRouterClient    (OpenRouter API Client)
       → OpenAIDirectClient   (LangChain ChatOpenAI)
       → MockLLMClient        (deterministic test responses)
 
@@ -370,11 +370,14 @@ class OpenRouterClient(BaseLLMClient):
     """Uses OpenRouter API (OpenAI-compatible) with free model fallback chain."""
 
     provider_name = "openrouter"
-    model_name = "meta-llama/llama-3.3-70b-instruct:free"
+    model_name = "openai/gpt-oss-120b:free"
 
-    # Fallback chain: try free models in order
-    FALLBACK_MODELS = [
-        "meta-llama/llama-3.3-70b-instruct:free",
+    # Task-specific fallback chains
+    CODE_VIS_MODELS = [
+        "openai/gpt-oss-120b:free",
+        "qwen/qwen3-coder:free",
+    ]
+    EXTRACTION_MODELS = [
         "openai/gpt-oss-120b:free",
         "qwen/qwen3-coder:free",
     ]
@@ -405,15 +408,30 @@ class OpenRouterClient(BaseLLMClient):
             "Output ONLY the JSON object, no markdown fences, no extra text."
         )
 
-        # Try each model in the fallback chain
-        models_to_try = list(self.FALLBACK_MODELS)
+        # Select task-specific chain
+        if task == "generate_visual_spec":
+            models_to_try = list(self.CODE_VIS_MODELS)
+        else:
+            models_to_try = list(self.EXTRACTION_MODELS)
+
         # If a custom model is configured, put it first
         custom_model = config.OPENROUTER_MODEL
         if custom_model and custom_model not in models_to_try:
             models_to_try.insert(0, custom_model)
 
+        def get_family_prefix(m_id: str) -> str:
+            if "/" in m_id:
+                return m_id.split("/")[0]
+            return m_id
+
+        failed_families = set()
         last_error = None
         for model_id in models_to_try:
+            family = get_family_prefix(model_id)
+            if family in failed_families:
+                print(f"[OpenRouter] Skipping model '{model_id}' because family '{family}' is rate-limited.")
+                continue
+
             # Initialize manual Langfuse trace generation
             lf_generation = None
             lf = get_langfuse_client()
@@ -468,17 +486,19 @@ class OpenRouterClient(BaseLLMClient):
                         raw_response=response_text, success=False,
                         error_category="invalid_json", error_message=str(je),
                     )
-                    if not is_retry:
-                        repair_prompt = (
-                            "The previous output was invalid JSON. "
-                            "Please repair and output valid JSON matching the schema.\n\n"
-                            f"Original Prompt:\n{prompt}\n\n"
-                            f"Invalid Output:\n{response_text}"
-                        )
-                        return await self.run_json(task, repair_prompt, schema, is_retry=True, trace_id=trace_id, callbacks=callbacks)
-                    raise LLMError(
-                        "invalid_json", f"OpenRouter JSON parse failed: {str(je)}"
+                    if lf_generation:
+                        try:
+                            lf_generation.end(
+                                output=response_text,
+                                metadata={"status": "failed", "error_category": "invalid_json", "model": actual_model},
+                            )
+                            flush_langfuse()
+                        except Exception:
+                            pass
+                    last_error = LLMError(
+                        "invalid_json", f"OpenRouter ({actual_model}) JSON parse failed: {str(je)}"
                     )
+                    continue
 
                 try:
                     parsed = schema.model_validate(json_data)
@@ -516,9 +536,19 @@ class OpenRouterClient(BaseLLMClient):
                         raw_response=response_text, success=False,
                         error_category="invalid_json", error_message=str(ve),
                     )
-                    raise LLMError(
-                        "invalid_json", f"OpenRouter Pydantic validation failed: {str(ve)}"
+                    if lf_generation:
+                        try:
+                            lf_generation.end(
+                                output=response_text,
+                                metadata={"status": "failed", "error_category": "invalid_json", "model": actual_model},
+                            )
+                            flush_langfuse()
+                        except Exception:
+                            pass
+                    last_error = LLMError(
+                        "invalid_json", f"OpenRouter ({actual_model}) Pydantic validation failed: {str(ve)}"
                     )
+                    continue
 
             except LLMError:
                 raise
@@ -547,6 +577,8 @@ class OpenRouterClient(BaseLLMClient):
 
                 # If rate_limit or timeout, try next model in fallback chain
                 if category in ("rate_limit", "timeout"):
+                    if category == "rate_limit":
+                        failed_families.add(family)
                     continue
                 # For auth errors, no point trying other models
                 if category == "auth_lost":
@@ -760,6 +792,19 @@ class LLMRouterClient(BaseLLMClient):
         # 3. Try each provider in order
         last_error: Optional[LLMError] = None
         for provider_name in providers:
+            if provider_name == "codex":
+                is_batch = (
+                    task in ("extract_knowledge_graph", "concept_detection", "generate_visual_spec")
+                    or "extract" in task
+                    or "detect" in task
+                    or "evaluate" in task
+                )
+                allowed = config.ENABLE_CODEX_FALLBACK_FOR_BATCH if is_batch else config.ENABLE_CODEX_FALLBACK_FOR_INTERACTIVE
+                if not allowed:
+                    print(f"[LLM Router] Skipping provider 'codex' for task '{task}' because fallback is disabled by config (is_batch={is_batch}).")
+                    last_error = LLMError("codex_disabled", f"Codex fallback disabled by config for task '{task}'.")
+                    continue
+
             client_cls = _PROVIDER_REGISTRY.get(provider_name)
             if not client_cls:
                 continue

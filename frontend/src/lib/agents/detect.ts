@@ -82,6 +82,7 @@ export async function detectConceptsForPages(
   const { data } = await runJson<DetectionBatchResult>(prompt, detectionBatchSchema, {
     reasoning: "low",
     signal,
+    task: "concept_detection",
   });
   return data;
 }

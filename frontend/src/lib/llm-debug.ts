@@ -20,6 +20,8 @@ export type LLMDebugEntry = {
   errorKind?: string;
   errorMessage?: string;
   usage?: unknown;
+  fallbackReason?: string;
+  codexFallbackUsed?: boolean;
 };
 
 const DEBUG_DIR = path.join(DATA_DIR, "debug");
@@ -29,7 +31,7 @@ export function isLLMDebugEnabled(): boolean {
   return process.env.DEBUG_LLM_RESPONSES === "1";
 }
 
-function redactSecrets(value: unknown): string | undefined {
+export function redactSecrets(value: unknown): string | undefined {
   if (value == null) return undefined;
   let text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
   text = text.replace(/(OPENAI_API_KEY|GEMINI_API_KEY|OPENROUTER_API_KEY|LANGFUSE_SECRET_KEY)\s*=\s*[^\s]+/gi, "$1=[REDACTED]");
@@ -56,6 +58,8 @@ export function logFrontendLLMDebug(entry: {
   errorKind?: string;
   errorMessage?: unknown;
   usage?: unknown;
+  fallbackReason?: string;
+  codexFallbackUsed?: boolean;
 }) {
   if (!isLLMDebugEnabled()) return;
   try {
@@ -77,6 +81,8 @@ export function logFrontendLLMDebug(entry: {
       errorKind: entry.errorKind,
       errorMessage: redactSecrets(entry.errorMessage),
       usage: entry.usage,
+      fallbackReason: entry.fallbackReason,
+      codexFallbackUsed: entry.codexFallbackUsed,
     };
     fs.appendFileSync(LLM_DEBUG_LOG_PATH, `${JSON.stringify(record)}\n`, "utf-8");
   } catch (e) {

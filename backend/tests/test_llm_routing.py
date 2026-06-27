@@ -1,6 +1,6 @@
 """
 Advanced LLM routing tests covering:
-- Provider fallback chains (Gemini fails → Codex fallback)
+- Provider fallback chains (OpenRouter fails -> Codex fallback)
 - Rate limiting triggers fallback
 - Invalid JSON triggers repair retry
 - Cache hit avoids provider call
@@ -277,3 +277,119 @@ def test_llm_error_category():
     assert err.category == "rate_limit"
     assert "Too many requests" in err.message
     assert "rate_limit" in str(err)
+
+
+# ---------------------------------------------------------------------------
+# Redesign Fallback & Task-Specific Chain Tests
+# ---------------------------------------------------------------------------
+
+def test_openrouter_task_specific_chains():
+    """Verify that OpenRouterClient routes tasks to correct model chains."""
+    with patch("openai.resources.chat.completions.Completions.create") as mock_create, \
+         patch("app.llm_client.get_langfuse_client", return_value=None), \
+         patch("app.llm_client.config") as mock_config:
+
+        mock_config.OPENROUTER_API_KEY = "dummy-key"
+        mock_config.OPENROUTER_BASE_URL = "https://dummy.api"
+        mock_config.OPENROUTER_MODEL = ""
+
+        # Mock successful return of structured JSON
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = '{"answer": "model test", "score": 99}'
+        mock_response.usage = None
+        mock_create.return_value = mock_response
+
+        client = OpenRouterClient()
+
+        # 1. Test code generation task (should use stable GPT-OSS first)
+        res_code = run_async(client.run_json("generate_visual_spec", "plot", TestSchema))
+        assert isinstance(res_code, TestSchema)
+        assert mock_create.call_args_list[0][1]["model"] == "openai/gpt-oss-120b:free"
+
+        # 2. Test text extraction task (should use stable GPT-OSS first)
+        mock_create.reset_mock()
+        res_ext = run_async(client.run_json("extract_knowledge_graph", "text", TestSchema))
+        assert isinstance(res_ext, TestSchema)
+        assert mock_create.call_args_list[0][1]["model"] == "openai/gpt-oss-120b:free"
+
+
+def test_openrouter_429_family_skipping():
+    """Verify rate-limit (429) failures skip sibling models of the same family."""
+    with patch("openai.resources.chat.completions.Completions.create") as mock_create, \
+         patch("app.llm_client.get_langfuse_client", return_value=None), \
+         patch("app.llm_client.OpenRouterClient.EXTRACTION_MODELS", ["meta-llama/llama-1:free", "meta-llama/llama-2:free", "qwen/qwen-1:free"]), \
+         patch("app.llm_client.config") as mock_config:
+
+        mock_config.OPENROUTER_API_KEY = "dummy-key"
+        mock_config.OPENROUTER_BASE_URL = "https://dummy.api"
+        mock_config.OPENROUTER_MODEL = ""
+
+        # First call: meta-llama/llama-1:free fails with 429.
+        # Sibling model meta-llama/llama-2:free must be skipped completely.
+        # Second call: qwen/qwen-1:free succeeds.
+        mock_create.side_effect = [
+            Exception("HTTP 429 Rate Limit"),
+            MagicMock(choices=[MagicMock(message=MagicMock(content='{"answer": "success", "score": 1}'))])
+        ]
+
+        client = OpenRouterClient()
+        res = run_async(client.run_json("extract_knowledge_graph", "text", TestSchema))
+        assert isinstance(res, TestSchema)
+        assert res.answer == "success"
+
+        # Verify only 2 calls were made to mock_create
+        assert len(mock_create.call_args_list) == 2
+        # Verify first call was meta-llama/llama-1:free
+        assert mock_create.call_args_list[0][1]["model"] == "meta-llama/llama-1:free"
+        # Verify second call was qwen/qwen-1:free (skipping meta-llama/llama-2:free)
+        assert mock_create.call_args_list[1][1]["model"] == "qwen/qwen-1:free"
+
+
+def test_router_codex_gating_behavior_batch_denied():
+    """Verify batch tasks respect ENABLE_CODEX_FALLBACK_FOR_BATCH config and block Codex fallback."""
+    with patch.object(OpenRouterClient, "run_json", new_callable=AsyncMock) as mock_or, \
+         patch.object(CodexCliClient, "run_json", new_callable=AsyncMock) as mock_codex, \
+         patch("app.llm_client.LLMRouterClient._cache_lookup", return_value=None), \
+         patch("app.llm_client._get_provider_order", return_value=["openrouter", "codex"]), \
+         patch("app.llm_client.config") as mock_config:
+
+        mock_config.ENABLE_LLM_FALLBACK = True
+        # Gating settings: disable batch fallback, enable interactive fallback
+        mock_config.ENABLE_CODEX_FALLBACK_FOR_BATCH = False
+        mock_config.ENABLE_CODEX_FALLBACK_FOR_INTERACTIVE = True
+
+        mock_or.side_effect = LLMError("rate_limit", "OpenRouter rate limited")
+
+        router = LLMRouterClient()
+
+        # Call batch task: should fail immediately without calling Codex
+        with pytest.raises(LLMError) as exc_info:
+            run_async(router.run_json("extract_knowledge_graph", "text", TestSchema))
+
+        assert exc_info.value.category == "codex_disabled"
+        mock_codex.assert_not_called()
+
+
+def test_router_codex_gating_behavior_interactive_allowed():
+    """Verify interactive tasks respect ENABLE_CODEX_FALLBACK_FOR_INTERACTIVE config and allow Codex fallback."""
+    with patch.object(OpenRouterClient, "run_json", new_callable=AsyncMock) as mock_or, \
+         patch.object(CodexCliClient, "run_json", new_callable=AsyncMock) as mock_codex, \
+         patch("app.llm_client.LLMRouterClient._cache_lookup", return_value=None), \
+         patch("app.llm_client._get_provider_order", return_value=["openrouter", "codex"]), \
+         patch("app.llm_client.config") as mock_config:
+
+        mock_config.ENABLE_LLM_FALLBACK = True
+        mock_config.ENABLE_CODEX_FALLBACK_FOR_BATCH = False
+        mock_config.ENABLE_CODEX_FALLBACK_FOR_INTERACTIVE = True
+
+        mock_or.side_effect = LLMError("rate_limit", "OpenRouter rate limited")
+        mock_codex.return_value = TestSchema(answer="codex interactive allowed", score=10)
+
+        router = LLMRouterClient()
+
+        # Call interactive task: should fallback to Codex
+        res = run_async(router.run_json("general_chat", "Hello", TestSchema))
+        assert isinstance(res, TestSchema)
+        assert res.answer == "codex interactive allowed"
+        mock_codex.assert_called_once()
