@@ -46,9 +46,53 @@ export default function TwoDAnimView({ spec, onRuntimeError }: Props) {
     let logicalW = container.clientWidth;
     let logicalH = container.clientHeight;
     let scale = 1;
+    let dpr = 1;
+    let setupFn: ReturnType<typeof compileFn> | null = null;
+
+    const applyTransform = () => {
+      ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+    };
+
+    const withScaledTransformGuard = (fn: () => void) => {
+      const originalSetTransform = ctx.setTransform.bind(ctx);
+      const originalResetTransform = ctx.resetTransform?.bind(ctx);
+      ctx.setTransform = ((a: number | DOMMatrix2DInit, b?: number, c?: number, d?: number, e?: number, f?: number) => {
+        if (typeof a === "number") {
+          originalSetTransform(
+            a * dpr * scale,
+            (b ?? 0) * dpr * scale,
+            (c ?? 0) * dpr * scale,
+            (d ?? 1) * dpr * scale,
+            (e ?? 0) * dpr * scale,
+            (f ?? 0) * dpr * scale,
+          );
+        } else {
+          originalSetTransform(a);
+          ctx.transform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+        }
+      }) as typeof ctx.setTransform;
+      ctx.resetTransform = (() => applyTransform()) as typeof ctx.resetTransform;
+      try {
+        fn();
+      } finally {
+        ctx.setTransform = originalSetTransform as typeof ctx.setTransform;
+        ctx.resetTransform = originalResetTransform as typeof ctx.resetTransform;
+      }
+    };
+
+    const runSetup = () => {
+      if (!setupFn) return;
+      applyTransform();
+      withScaledTransformGuard(() => {
+        const ret = setupFn?.({ ctx, width: logicalW, height: logicalH }) as
+          | { draw?: DrawFn }
+          | undefined;
+        if (ret && typeof ret.draw === "function") drawCb = ret.draw;
+      });
+    };
 
     const resize = () => {
-      const dpr = Math.min(window.devicePixelRatio, 2);
+      dpr = Math.min(window.devicePixelRatio, 2);
       const w = container.clientWidth;
       const h = container.clientHeight;
       canvas.width = Math.floor(w * dpr);
@@ -72,16 +116,13 @@ export default function TwoDAnimView({ spec, onRuntimeError }: Props) {
         logicalH = h;
       }
 
-      ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+      applyTransform();
     };
     resize();
 
     try {
-      const fn = compileFn(spec.setup_code);
-      const ret = fn({ ctx, width: logicalW, height: logicalH }) as
-        | { draw?: DrawFn }
-        | undefined;
-      if (ret && typeof ret.draw === "function") drawCb = ret.draw;
+      setupFn = compileFn(spec.setup_code);
+      runSetup();
     } catch (e) {
       // warn (not error) — Next.js dev overlay treats console.error as
       // an "Issue". The orchestrator handles retries.
@@ -95,7 +136,8 @@ export default function TwoDAnimView({ spec, onRuntimeError }: Props) {
       const dt = (now - lastT) / 1000;
       lastT = now;
       try {
-        drawCb?.(ctx, logicalW, logicalH, t, dt);
+        applyTransform();
+        withScaledTransformGuard(() => drawCb?.(ctx, logicalW, logicalH, t, dt));
       } catch (e) {
         console.warn("2D anim draw threw (will be reported for repair):", e);
         reportError(`Animation crashed mid-frame: ${(e as Error).message}`);
@@ -105,7 +147,15 @@ export default function TwoDAnimView({ spec, onRuntimeError }: Props) {
     };
     raf = requestAnimationFrame(tick);
 
-    const ro = new ResizeObserver(resize);
+    const ro = new ResizeObserver(() => {
+      resize();
+      try {
+        runSetup();
+      } catch (e) {
+        console.warn("2D anim setup after resize threw (will be reported for repair):", e);
+        reportError(`Animation crashed after resize: ${(e as Error).message}`);
+      }
+    });
     ro.observe(container);
 
     return () => {

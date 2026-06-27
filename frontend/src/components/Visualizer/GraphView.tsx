@@ -11,6 +11,18 @@ type Props = {
 
 const COLORS = ["#5b66f1", "#d97706", "#db2777", "#7c3aed", "#059669", "#dc2626"];
 
+function fitLabel(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
+  if (maxWidth <= 0 || ctx.measureText(text).width <= maxWidth) return text;
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (ctx.measureText(`${text.slice(0, mid)}…`).width <= maxWidth) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo > 0 ? `${text.slice(0, lo)}…` : "…";
+}
+
 function safeFn(expr: string): (x: number) => number {
   // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
   const fn = new Function("Math", "x", `return (${expr});`) as (M: typeof Math, x: number) => number;
@@ -39,31 +51,42 @@ export default function GraphView({ spec, onRuntimeError }: Props) {
     const ctx = c.getContext("2d");
     if (!ctx) return;
 
-    const dpr = Math.min(window.devicePixelRatio, 2);
-    const W = cont.clientWidth;
-    const H = cont.clientHeight;
-    c.width = W * dpr;
-    c.height = H * dpr;
-    c.style.width = `${W}px`;
-    c.style.height = `${H}px`;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, W, H);
-
-    const padL = 50;
-    const padR = 20;
-    const padT = 20;
-    const padB = 40;
-    const plotW = W - padL - padR;
-    const plotH = H - padT - padB;
-
     type Pt = [number, number];
     type Series = { name?: string; color: string; points: Pt[] };
 
-    const series: Series[] = [];
+    const render = () => {
+      const dpr = Math.min(window.devicePixelRatio, 2);
+      const physicalW = cont.clientWidth;
+      const physicalH = cont.clientHeight;
+      if (physicalW <= 0 || physicalH <= 0) return;
 
-    try {
+      c.width = Math.floor(physicalW * dpr);
+      c.height = Math.floor(physicalH * dpr);
+      c.style.width = `${physicalW}px`;
+      c.style.height = `${physicalH}px`;
+
+      const minLogicalWidth = 800;
+      const minLogicalHeight = 500;
+      const fitScale = Math.min(physicalW / minLogicalWidth, physicalH / minLogicalHeight);
+      const scale = fitScale < 1 && fitScale > 0 ? fitScale : 1;
+      const W = scale < 1 ? physicalW / scale : physicalW;
+      const H = scale < 1 ? physicalH / scale : physicalH;
+
+      ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, W, H);
+
+      const padL = 50;
+      const padR = 20;
+      const padT = 20;
+      const padB = 40;
+      const plotW = W - padL - padR;
+      const plotH = H - padT - padB;
+
+      const series: Series[] = [];
+
+      try {
       let data: Record<string, unknown> = {};
       try {
         data = JSON.parse(spec.data_json) as Record<string, unknown>;
@@ -96,6 +119,10 @@ export default function GraphView({ spec, onRuntimeError }: Props) {
         const gap = (plotW / bars.length) * 0.3;
         ctx.font = "11px ui-sans-serif, system-ui";
         ctx.textAlign = "center";
+        ctx.textBaseline = "alphabetic";
+        const slotW = plotW / Math.max(bars.length, 1);
+        const rotateLabels = bars.some((b) => ctx.measureText(b.label).width > slotW * 0.9);
+        const labelMaxW = rotateLabels ? Math.min(90, Math.max(36, plotH * 0.25)) : Math.max(24, slotW * 0.9);
         bars.forEach((b, i) => {
           const x = padL + i * (bw + gap) + gap / 2;
           const h = (b.value / maxV) * plotH;
@@ -103,7 +130,17 @@ export default function GraphView({ spec, onRuntimeError }: Props) {
           ctx.fillStyle = COLORS[i % COLORS.length];
           ctx.fillRect(x, y, bw, h);
           ctx.fillStyle = "#2a2c33";
-          ctx.fillText(b.label, x + bw / 2, padT + plotH + 16);
+          const label = fitLabel(ctx, b.label, labelMaxW);
+          if (rotateLabels) {
+            ctx.save();
+            ctx.translate(x + bw / 2, padT + plotH + 18);
+            ctx.rotate(-Math.PI / 4);
+            ctx.textAlign = "right";
+            ctx.fillText(label, 0, 0);
+            ctx.restore();
+          } else {
+            ctx.fillText(label, x + bw / 2, padT + plotH + 16);
+          }
           ctx.fillStyle = "#6b6e78";
           ctx.fillText(String(b.value), x + bw / 2, y - 6);
         });
@@ -167,15 +204,16 @@ export default function GraphView({ spec, onRuntimeError }: Props) {
       }
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
-      const xTicks = 6;
+      const xTicks = Math.max(2, Math.min(6, Math.floor(plotW / 90)));
       for (let i = 0; i <= xTicks; i++) {
         const x = xMin + ((xMax - xMin) * i) / xTicks;
         const px = sx(x);
+        const label = x.toFixed(Math.abs(x) < 10 ? 2 : 0);
         ctx.beginPath();
         ctx.moveTo(px, padT);
         ctx.lineTo(px, padT + plotH);
         ctx.stroke();
-        ctx.fillText(x.toFixed(Math.abs(x) < 10 ? 2 : 0), px, padT + plotH + 4);
+        ctx.fillText(label, px, padT + plotH + 4);
       }
 
       // Origin axes
@@ -225,12 +263,14 @@ export default function GraphView({ spec, onRuntimeError }: Props) {
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
         series.forEach((s) => {
+          const txt = fitLabel(ctx, s.name || "", 120);
+          const itemW = 54 + ctx.measureText(txt).width;
+          if (lx + itemW > padL + plotW) lx = padL + 10;
           ctx.fillStyle = s.color;
           ctx.fillRect(lx, ly - 3, 18, 6);
           ctx.fillStyle = "#2a2c33";
-          const txt = s.name || "";
           ctx.fillText(txt, lx + 24, ly);
-          lx += 30 + ctx.measureText(txt).width;
+          lx += itemW;
         });
       }
 
@@ -244,10 +284,17 @@ export default function GraphView({ spec, onRuntimeError }: Props) {
       ctx.rotate(-Math.PI / 2);
       ctx.fillText(spec.y_label || "y", 0, 0);
       ctx.restore();
-    } catch (e) {
-      console.warn("graph render threw (will be reported for repair):", e);
-      reportError(`Graph render failed: ${(e as Error).message}`);
-    }
+      } catch (e) {
+        console.warn("graph render threw (will be reported for repair):", e);
+        reportError(`Graph render failed: ${(e as Error).message}`);
+      }
+    };
+
+    render();
+    const ro = new ResizeObserver(render);
+    ro.observe(cont);
+
+    return () => ro.disconnect();
     // onRuntimeError captured by closure; we don't re-render the chart on
     // every parent rerender that produces a new function reference.
     // eslint-disable-next-line react-hooks/exhaustive-deps

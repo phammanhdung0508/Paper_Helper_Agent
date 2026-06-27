@@ -19,6 +19,9 @@ if (typeof window !== "undefined") {
 }
 
 const TAG_LABEL_VISIBLE_CHARS = 8;
+const TAG_PILL_WIDTH = 96;
+const TAG_PILL_HEIGHT = 20;
+const TAG_PILL_GAP = 4;
 
 export type Tag = {
   id: string;
@@ -47,6 +50,85 @@ type Props = {
 function truncateTagLabel(label: string): string {
   if (label.length <= TAG_LABEL_VISIBLE_CHARS) return label;
   return `${label.slice(0, TAG_LABEL_VISIBLE_CHARS).trimEnd()}...`;
+}
+
+type TagPosition = { left: number; top: number };
+
+function tagAnchorPosition(tag: Tag, scale: number, pdfHeight: number): TagPosition {
+  return {
+    top: (pdfHeight - tag.endY - tag.fontHeight * 0.85) * scale - 1,
+    left: tag.endX * scale + 4,
+  };
+}
+
+function layoutTagPills(tags: Tag[], scale: number, pdfWidth: number, pdfHeight: number): Map<string, TagPosition> {
+  const pageW = pdfWidth * scale;
+  const pageH = pdfHeight * scale;
+  const placed: Array<TagPosition & { right: number; bottom: number }> = [];
+  const positions = new Map<string, TagPosition>();
+
+  const sorted = [...tags].sort((a, b) => {
+    const pa = tagAnchorPosition(a, scale, pdfHeight);
+    const pb = tagAnchorPosition(b, scale, pdfHeight);
+    return pa.top - pb.top || pa.left - pb.left;
+  });
+
+  const overlaps = (candidate: TagPosition) => {
+    const right = candidate.left + TAG_PILL_WIDTH;
+    const bottom = candidate.top + TAG_PILL_HEIGHT;
+    return placed.some((p) => (
+      candidate.left < p.right + TAG_PILL_GAP &&
+      right + TAG_PILL_GAP > p.left &&
+      candidate.top < p.bottom + TAG_PILL_GAP &&
+      bottom + TAG_PILL_GAP > p.top
+    ));
+  };
+
+  for (const tag of sorted) {
+    const anchor = tagAnchorPosition(tag, scale, pdfHeight);
+    const baseLeft = Math.max(2, Math.min(anchor.left, Math.max(2, pageW - TAG_PILL_WIDTH - 2)));
+    const baseTop = Math.max(2, Math.min(anchor.top, Math.max(2, pageH - TAG_PILL_HEIGHT - 2)));
+    let best = { left: baseLeft, top: baseTop };
+
+    if (overlaps(best)) {
+      let found = false;
+      for (let lane = 1; lane <= 10 && !found; lane++) {
+        const offsets = [lane, -lane];
+        for (const offset of offsets) {
+          const candidateTop = Math.max(
+            2,
+            Math.min(baseTop + offset * (TAG_PILL_HEIGHT + TAG_PILL_GAP), Math.max(2, pageH - TAG_PILL_HEIGHT - 2)),
+          );
+          const candidate = { left: baseLeft, top: candidateTop };
+          if (!overlaps(candidate)) {
+            best = candidate;
+            found = true;
+            break;
+          }
+        }
+      }
+      for (let col = 1; col <= 4 && !found; col++) {
+        const candidateLeft = Math.max(
+          2,
+          Math.min(baseLeft - col * (TAG_PILL_WIDTH + TAG_PILL_GAP), Math.max(2, pageW - TAG_PILL_WIDTH - 2)),
+        );
+        const candidate = { left: candidateLeft, top: baseTop };
+        if (!overlaps(candidate)) {
+          best = candidate;
+          found = true;
+        }
+      }
+    }
+
+    placed.push({
+      ...best,
+      right: best.left + TAG_PILL_WIDTH,
+      bottom: best.top + TAG_PILL_HEIGHT,
+    });
+    positions.set(tag.id, best);
+  }
+
+  return positions;
 }
 
 export default function PdfViewer({
@@ -368,6 +450,10 @@ function PdfPage({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textLayerRef = useRef<HTMLDivElement | null>(null);
+  const tagPositions = useMemo(
+    () => layoutTagPills(tags, scale, pdfWidth, pdfHeight),
+    [tags, scale, pdfWidth, pdfHeight],
+  );
 
   useEffect(() => {
     if (!pdfDoc || !scale || !canvasRef.current) return;
@@ -463,8 +549,7 @@ function PdfPage({
           <TagPill
             key={t.id}
             tag={t}
-            scale={scale}
-            pdfHeight={pdfHeight}
+            position={tagPositions.get(t.id) ?? tagAnchorPosition(t, scale, pdfHeight)}
             isActive={activeTagId === t.id}
             onClick={() => onTagClick(t.id)}
           />
@@ -479,21 +564,16 @@ function PdfPage({
 
 function TagPill({
   tag,
-  scale,
-  pdfHeight,
+  position,
   isActive,
   onClick,
 }: {
   tag: Tag;
-  scale: number;
-  pdfHeight: number;
+  position: TagPosition;
   isActive: boolean;
   onClick: () => void;
 }) {
   const { Icon, label: typeLabel } = VIZ_TYPE_META[tag.type];
-
-  const top = (pdfHeight - tag.endY - tag.fontHeight * 0.85) * scale - 1;
-  const left = tag.endX * scale + 4;
 
   const isIdle = !tag.ready && !tag.generating;
   const clickable = tag.ready || isIdle;
@@ -525,7 +605,7 @@ function TagPill({
       }}
       data-active={isActive ? "true" : "false"}
       data-state={stateAttr}
-      style={{ left, top, ...vizTypeStyle(tag.type) }}
+      style={{ left: position.left, top: position.top, zIndex: isActive ? 2 : 1, ...vizTypeStyle(tag.type) }}
       className="tag-pill viz-tooltip-anchor pointer-events-auto absolute -translate-y-0.5"
     >
       {tag.generating ? (

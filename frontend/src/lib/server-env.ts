@@ -36,9 +36,15 @@ function loadBackendEnv() {
 }
 
 export function serverEnv(name: string): string | undefined {
-  if (process.env[name]) return process.env[name];
-  loadBackendEnv();
-  return backendEnvCache.get(name);
+  let value = process.env[name];
+  if (value === undefined) {
+    loadBackendEnv();
+    value = backendEnvCache.get(name);
+  }
+  if (value && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
+    value = value.slice(1, -1);
+  }
+  return value;
 }
 
 export function serverEnvFlag(name: string, defaultValue = false): boolean {

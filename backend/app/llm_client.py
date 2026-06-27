@@ -981,6 +981,10 @@ class LLMRouterClient(BaseLLMClient):
         last_error: Optional[LLMError] = None
         for provider_name in providers:
             if provider_name == "codex":
+                if not config.ENABLE_CODEX:
+                    print(f"[LLM Router] Skipping provider 'codex' for task '{task}' because ENABLE_CODEX=false.")
+                    last_error = LLMError("codex_disabled", "Codex provider disabled by ENABLE_CODEX=false.")
+                    continue
                 is_batch = (
                     task in ("extract_knowledge_graph", "concept_detection", "generate_visual_spec")
                     or "extract" in task

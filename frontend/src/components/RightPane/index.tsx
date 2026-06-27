@@ -406,6 +406,19 @@ function VisualizerBody({
   loadingDetail?: string;
   onRuntimeError?: (msg: string) => void;
 }) {
+  const renderSpec = () => {
+    if (!spec) return null;
+    return (
+      <div className="h-full min-h-[520px] w-full min-w-[820px]">
+        {spec.type === "3d" && <ThreeDView spec={spec} onRuntimeError={onRuntimeError} />}
+        {spec.type === "2d-anim" && <TwoDAnimView spec={spec} onRuntimeError={onRuntimeError} />}
+        {spec.type === "2d-text" && <TwoDTextView spec={spec} />}
+        {spec.type === "formula" && <FormulaView spec={spec} />}
+        {spec.type === "graph" && <GraphView spec={spec} onRuntimeError={onRuntimeError} />}
+      </div>
+    );
+  };
+
   return (
     <AnimatePresence mode="wait">
       {loading && !spec && (
@@ -456,13 +469,9 @@ function VisualizerBody({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
-          className="absolute inset-0"
+          className="absolute inset-0 overflow-auto overscroll-contain bg-white"
         >
-          {spec.type === "3d" && <ThreeDView spec={spec} onRuntimeError={onRuntimeError} />}
-          {spec.type === "2d-anim" && <TwoDAnimView spec={spec} onRuntimeError={onRuntimeError} />}
-          {spec.type === "2d-text" && <TwoDTextView spec={spec} />}
-          {spec.type === "formula" && <FormulaView spec={spec} />}
-          {spec.type === "graph" && <GraphView spec={spec} onRuntimeError={onRuntimeError} />}
+          {renderSpec()}
         </motion.div>
       )}
     </AnimatePresence>

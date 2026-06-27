@@ -103,6 +103,25 @@ background — pick from this palette:
 Add labelled axes / annotations with ctx.fillText so the meaning is
 self-evident.
 
+LAYOUT QUALITY RULES — these are mandatory:
+  - Design for a logical canvas of at least 800x500. The app may scroll the
+    stage; do NOT cram everything into the first 400px.
+  - Use a small number of visual elements. Prefer 3-6 labelled objects; never
+    draw every token, every table row, or every attention cell if that creates
+    clutter.
+  - Text must never overlap text, boxes, arrows, or chart marks. Reserve at
+    least 18px vertical space per text line and at least 12px horizontal gap
+    between labelled objects.
+  - Use helper functions for label placement: measure text with
+    ctx.measureText, truncate long labels with an ellipsis, and skip optional
+    labels when space is tight.
+  - Keep all text inside the canvas bounds. Clamp x/y before fillText.
+  - Do NOT place stacked labels using fixed offsets like height/2 + 20,
+    height/2 + 40 unless you first compute enough line spacing from the
+    current height.
+  - Do NOT call ctx.setTransform or ctx.resetTransform. The renderer owns the
+    transform.
+
 CONSTRAINTS:
   - DO NOT touch document, window, fetch, import, require, eval.
   - DO NOT load images.
@@ -200,6 +219,51 @@ function syntaxCheck(code: string): string | null {
   }
 }
 
+function layoutQualityCheck(spec: VizSpec): string | null {
+  if (spec.type === "2d-anim") {
+    const code = spec.setup_code;
+    if (/ctx\.(?:setTransform|resetTransform)\s*\(/.test(code)) {
+      return "Do not call ctx.setTransform/resetTransform; the renderer owns canvas scaling.";
+    }
+    if (/height\s*\/\s*2\s*[+-]\s*(?:20|30|40|50|60|70|80)/.test(code)) {
+      return "Avoid stacking text around height/2 with fixed offsets; compute label rows from available height.";
+    }
+    const fillTextCount = (code.match(/\.fillText\s*\(/g) ?? []).length;
+    if (fillTextCount > 18) {
+      return "Too many canvas text labels; reduce labels to the most important 3-6 annotations.";
+    }
+    const hardcodedFontCount = (code.match(/ctx\.font\s*=\s*['"][^'"]*(?:14|15|16|18|20|22|24)px/g) ?? []).length;
+    if (hardcodedFontCount > 4) {
+      return "Too many large fixed font sizes; use fewer labels and measured/truncated text.";
+    }
+  }
+
+  if (spec.type === "graph") {
+    try {
+      const data = JSON.parse(spec.data_json) as {
+        bars?: Array<{ label?: string }>;
+        series?: Array<{ name?: string }>;
+      };
+      if (spec.chart_type === "bars" && data.bars) {
+        if (data.bars.length > 8) return "Bar charts must use at most 8 bars to avoid label collisions.";
+        if (data.bars.some((b) => (b.label ?? "").length > 36)) {
+          return "Bar labels are too long; shorten labels to 36 characters or fewer.";
+        }
+      }
+      if (spec.chart_type === "lines" && data.series) {
+        if (data.series.length > 4) return "Line charts must use at most 4 series to keep the legend readable.";
+        if (data.series.some((s) => (s.name ?? "").length > 30)) {
+          return "Series names are too long; shorten legend labels to 30 characters or fewer.";
+        }
+      }
+    } catch (e) {
+      return `Graph data_json must be valid JSON: ${(e as Error).message}`;
+    }
+  }
+
+  return null;
+}
+
 function specCodeOrNull(spec: VizSpec): string | null {
   if (spec.type === "3d" || spec.type === "2d-anim") return spec.setup_code;
   return null;
@@ -236,28 +300,28 @@ export async function generateVizSpec(args: GenerateVizArgs): Promise<VizSpec> {
     task: "generate_visual_spec",
   });
 
-  // Server-side syntax pre-flight for code-emitting types — silent repair
-  // if the model truncated mid-expression or produced broken JS.
+  // Server-side pre-flight for generated specs. Syntax failures and obvious
+  // cramped-layout patterns get one silent repair pass before saving.
   const code = specCodeOrNull(data);
-  if (code) {
-    const err = syntaxCheck(code);
-    if (err) {
-      const repairPrompt = repairPreamble(data, err) + basePrompt;
-      try {
-        const { data: fixed } = await runJson<VizSpec>(repairPrompt, schema, {
-          reasoning: "medium",
-          webSearch: false,
-          signal: args.signal,
-          debugTask: `repair_viz:${args.type}`,
-          task: "generate_visual_spec",
-        });
-        const fixedCode = specCodeOrNull(fixed);
-        if (fixedCode && !syntaxCheck(fixedCode)) {
-          data = fixed;
-        }
-      } catch {
-        /* let client retry budget handle it */
+  const qualityErr = layoutQualityCheck(data);
+  const err = code ? syntaxCheck(code) ?? qualityErr : qualityErr;
+  if (err) {
+    const repairPrompt = repairPreamble(data, err) + basePrompt;
+    try {
+      const { data: fixed } = await runJson<VizSpec>(repairPrompt, schema, {
+        reasoning: "medium",
+        webSearch: false,
+        signal: args.signal,
+        debugTask: `repair_viz:${args.type}`,
+        task: "generate_visual_spec",
+      });
+      const fixedCode = specCodeOrNull(fixed);
+      const fixedErr = fixedCode ? syntaxCheck(fixedCode) ?? layoutQualityCheck(fixed) : layoutQualityCheck(fixed);
+      if (!fixedErr) {
+        data = fixed;
       }
+    } catch {
+      /* let client retry budget handle it */
     }
   }
 

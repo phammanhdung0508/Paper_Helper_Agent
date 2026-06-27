@@ -69,7 +69,14 @@ function threadOptions(opts: RunOptions = {}): ThreadOptions {
 }
 
 function buildThread(opts: RunOptions = {}) {
+  assertCodexEnabled();
   return getCodex().startThread(threadOptions(opts));
+}
+
+function assertCodexEnabled() {
+  if (!serverEnvFlag("ENABLE_CODEX", false)) {
+    throw new CodexError("generic", "Codex is disabled by ENABLE_CODEX=false.");
+  }
 }
 
 /** Strip markdown code fences the model sometimes wraps JSON in, then parse. */
@@ -259,9 +266,9 @@ export function classifyCodexError(err: unknown): CodexError {
 let _langfuse: Langfuse | null = null;
 function getLangfuseClient(): Langfuse | null {
   if (_langfuse) return _langfuse;
-  const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
-  const secretKey = process.env.LANGFUSE_SECRET_KEY;
-  const baseUrl = process.env.LANGFUSE_HOST || "https://cloud.langfuse.com";
+  const publicKey = serverEnv("LANGFUSE_PUBLIC_KEY");
+  const secretKey = serverEnv("LANGFUSE_SECRET_KEY");
+  const baseUrl = serverEnv("LANGFUSE_HOST") || "https://cloud.langfuse.com";
   if (!publicKey || !secretKey) return null;
   _langfuse = new Langfuse({ publicKey, secretKey, baseUrl });
   return _langfuse;
@@ -373,10 +380,18 @@ export async function runJson<T>(
       const errMsg = orErr instanceof Error ? orErr.message : String(orErr);
       console.warn(`[OpenRouter] All models failed for task '${taskName}': ${errMsg}`);
 
-      const isBatch = taskName === "extract_knowledge_graph" || taskName === "concept_detection" || taskName.includes("detect");
+      const isBatch =
+        taskName === "extract_knowledge_graph" ||
+        taskName === "concept_detection" ||
+        taskName === "generate_visual_spec" ||
+        taskName.includes("detect") ||
+        taskName.includes("extract") ||
+        taskName.includes("generate_viz") ||
+        taskName.includes("repair_viz") ||
+        taskName.includes("evaluate");
       const fallbackAllowed = isBatch
-        ? process.env.ENABLE_CODEX_FALLBACK_FOR_BATCH === "true"
-        : process.env.ENABLE_CODEX_FALLBACK_FOR_INTERACTIVE === "true";
+        ? serverEnvFlag("ENABLE_CODEX_FALLBACK_FOR_BATCH", false)
+        : serverEnvFlag("ENABLE_CODEX_FALLBACK_FOR_INTERACTIVE", false);
 
       logFrontendLLMDebug({
         task: taskName,
@@ -399,6 +414,7 @@ export async function runJson<T>(
 
   // Short-circuit: if we know we're inside a rate-limit window, fail fast
   // without burning another Codex call.
+  assertCodexEnabled();
   const preflight = preflightHealth();
   if (preflight) throw preflight;
 
@@ -493,6 +509,7 @@ export async function runJsonInThread<T>(args: {
   resume?: { threadId: string; input: string };
   start?: { input: string };
 }): Promise<{ data: T; usage: unknown; threadId: string | null }> {
+  assertCodexEnabled();
   const preflight = preflightHealth();
   if (preflight) throw preflight;
   const opts = args.opts ?? {};
