@@ -1,22 +1,4 @@
-/**
- * Thin wrapper around @openai/codex-sdk that gives us:
- *   - lazily-initialized singleton
- *   - sane defaults for "answer-only" mode (read-only sandbox, no approvals,
- *     web search off by default)
- *   - a `runJson` helper that runs a one-shot turn against an output-schema
- *     and returns the parsed JSON, with retry-on-parse-failure
- *   - structured CodexError classification (auth lost vs rate-limit vs
- *     generic). Every agent call funnels through here, so the rest of the
- *     app gets a single, stable shape to display.
- *
- * Note on the Codex binary: in packaged Electron builds the main process
- * resolves the bundled binary and exposes its absolute path through
- * CODEX_BINARY_PATH. Passing that path to the SDK avoids fragile
- * node_modules lookup from the standalone Next server.
- */
-
-import { Codex } from "@openai/codex-sdk";
-import type { ThreadOptions } from "@openai/codex-sdk";
+import { Codex, type ThreadOptions } from "@openai/codex-sdk";
 import { Langfuse } from "langfuse";
 import { CODEX_SCRATCH_DIR } from "./paths";
 import { logFrontendLLMDebug, redactSecrets } from "./llm-debug";
@@ -26,34 +8,31 @@ import { runGroqJson } from "./groq";
 import { serverEnv, serverEnvFlag } from "./server-env";
 
 let _codex: Codex | null = null;
-
 function getCodex(): Codex {
   if (_codex) return _codex;
   const codexPathOverride = process.env.CODEX_BINARY_PATH;
   _codex = new Codex({
     ...(codexPathOverride ? { codexPathOverride } : {}),
-    config: {
-      // disable image generation so we can use 'low' reasoning; the demo is
-      // text-only so there is nothing to lose.
-      tools: { image_gen: false },
-    },
+    config: { tools: { image_gen: false } },
   });
   return _codex;
 }
 
 export type RunOptions = {
-  /** Defaults to "low" — fastest answer-only model setting that allows tools=image_gen=false. */
   reasoning?: "low" | "medium" | "high";
-  /** Allow live web search for this call (e.g. legal citations). */
   webSearch?: boolean;
-  /** AbortSignal forwarded to the underlying child process. */
   signal?: AbortSignal;
-  /** Override default thread options. */
   threadOverrides?: Partial<ThreadOptions>;
-  /** Optional debug label for raw-response logging. */
   debugTask?: string;
-  /** Formal task classification for model routing and fallback decisions. */
   task?: string;
+};
+
+type CodexThread = {
+  id?: string | null;
+  run: (
+    prompt: string,
+    options: { outputSchema: object; signal?: AbortSignal },
+  ) => Promise<{ finalResponse?: string; usage: unknown }>;
 };
 
 function threadOptions(opts: RunOptions = {}): ThreadOptions {
@@ -68,60 +47,26 @@ function threadOptions(opts: RunOptions = {}): ThreadOptions {
   };
 }
 
-function buildThread(opts: RunOptions = {}) {
-  assertCodexEnabled();
-  return getCodex().startThread(threadOptions(opts));
-}
-
 function assertCodexEnabled() {
   if (!serverEnvFlag("ENABLE_CODEX", false)) {
     throw new CodexError("generic", "Codex is disabled by ENABLE_CODEX=false.");
   }
 }
 
-/** Strip markdown code fences the model sometimes wraps JSON in, then parse. */
 function parseTurnJson<T>(finalResponse: string | undefined): T {
   const text = finalResponse?.trim();
   if (!text) throw new Error("Empty finalResponse from codex");
-  const cleaned = text
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/```$/i, "")
-    .trim();
+  const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/```$/i, "").trim();
   return JSON.parse(cleaned) as T;
 }
 
-/**
- * Error kinds that we want the UI to react to differently. Anything not
- * one of these stays `generic`; the calling code can still surface the
- * raw message but the banner won't claim a rate-limit when there isn't one.
- */
-export type CodexErrorKind =
-  | "auth_lost" // user is not logged in (or token revoked)
-  | "rate_limit" // hit the 5h or weekly window
-  | "binary_missing" // the codex binary itself can't be found
-  | "generic";
+export type CodexErrorKind = "auth_lost" | "rate_limit" | "binary_missing" | "generic";
 
 export class CodexError extends Error {
   readonly kind: CodexErrorKind;
-  /**
-   * If `kind === "rate_limit"` and the model gave us a deadline,
-   * `retryAt` is a unix-ms timestamp the UI can count down to. Optional;
-   * the wrapper falls back to a phrased message when no deadline is
-   * available.
-   */
   readonly retryAt?: number;
-  /**
-   * Coarse window the rate limit belongs to, when the message tells us.
-   * "5h" or "weekly" — the same labels the codex TUI uses. Falls back to
-   * "unknown" if we can't tell.
-   */
   readonly window?: "5h" | "weekly" | "unknown";
-
-  constructor(
-    kind: CodexErrorKind,
-    message: string,
-    extras?: { retryAt?: number; window?: "5h" | "weekly" | "unknown" },
-  ) {
+  constructor(kind: CodexErrorKind, message: string, extras?: { retryAt?: number; window?: "5h" | "weekly" | "unknown" }) {
     super(message);
     this.name = "CodexError";
     this.kind = kind;
@@ -130,21 +75,13 @@ export class CodexError extends Error {
   }
 }
 
-// ── Health mailbox ──────────────────────────────────────────────────────
-// Process-local snapshot of the most recent CodexError. The UI polls
-// /api/codex/health to render a banner with a countdown + reconnect
-// button. We also use it to short-circuit calls while a rate limit is
-// still active — no point hammering the API.
 export type CodexHealth = {
   ok: boolean;
   kind: CodexErrorKind | null;
   message: string | null;
   retryAt: number | null;
   window: "5h" | "weekly" | "unknown" | null;
-  /** Monotone counter — UI uses this to detect "a new error came in" vs
-   *  "still the same one I'm already showing". */
   serial: number;
-  /** Last successful Codex call timestamp (epoch ms). */
   lastOkAt: number | null;
 };
 
@@ -163,18 +100,10 @@ const _initialHealth: CodexHealth = {
   lastOkAt: null,
 };
 
-const health: CodexHealth =
-  globalThis.__getitCodexHealth ??
-  (globalThis.__getitCodexHealth = { ..._initialHealth });
+const health: CodexHealth = globalThis.__getitCodexHealth ?? (globalThis.__getitCodexHealth = { ..._initialHealth });
 
 export function getCodexHealth(): CodexHealth {
-  // If a rate-limit retry deadline has passed, auto-clear so the UI
-  // stops showing the banner without a server round-trip.
-  if (
-    health.kind === "rate_limit" &&
-    health.retryAt != null &&
-    Date.now() >= health.retryAt
-  ) {
+  if (health.kind === "rate_limit" && health.retryAt != null && Date.now() >= health.retryAt) {
     Object.assign(health, _initialHealth, { serial: health.serial });
   }
   return { ...health };
@@ -198,11 +127,7 @@ function markError(err: CodexError) {
 }
 
 function preflightHealth(): CodexError | null {
-  if (
-    health.kind === "rate_limit" &&
-    health.retryAt != null &&
-    Date.now() < health.retryAt
-  ) {
+  if (health.kind === "rate_limit" && health.retryAt != null && Date.now() < health.retryAt) {
     return new CodexError("rate_limit", health.message ?? "Rate limit active", {
       retryAt: health.retryAt,
       window: health.window ?? "unknown",
@@ -211,52 +136,40 @@ function preflightHealth(): CodexError | null {
   return null;
 }
 
-const RX_RATE_LIMIT =
-  /(rate.?limit|usage limit|too many requests|429|quota|you've hit|you have hit)/i;
-const RX_TRY_AGAIN_SECONDS = /try again in\s*(\d+(?:\.\d+)?)\s*(s|ms|seconds?)/i;
-const RX_TRY_AGAIN_MIN = /try again in\s*(\d+(?:\.\d+)?)\s*(m|mins?|minutes?)/i;
-const RX_TRY_AGAIN_HOUR = /try again in\s*(\d+(?:\.\d+)?)\s*(h|hrs?|hours?)/i;
-const RX_AUTH = /(not logged in|please.*log ?in|unauthori[sz]ed|401|invalid api key|token (?:has )?expired|sign in)/i;
-const RX_BINARY = /(unable to locate codex|cannot find module|enoent.*codex|codex.*not found|spawn .* enoent)/i;
-const RX_WEEKLY = /\bweekly\b/i;
-const RX_FIVE_H = /\b(5\s*h|5\s*hour|five hour)\b/i;
+// Grouped Regex patterns
+const ERR_PATTERNS = {
+  RATE_LIMIT: /(rate.?limit|usage limit|too many requests|429|quota|you've hit|you have hit)/i,
+  AUTH: /(not logged in|please.*log ?in|unauthori[sz]ed|401|invalid api key|token (?:has )?expired|sign in)/i,
+  BINARY: /(unable to locate codex|cannot find module|enoent.*codex|codex.*not found|spawn .* enoent)/i,
+  TIME: /try again in\s*(\d+(?:\.\d+)?)\s*(s|ms|seconds?|m|mins?|minutes?|h|hrs?|hours?)/i,
+  WEEKLY: /\bweekly\b/i,
+  FIVE_H: /\b(5\s*h|5\s*hour|five hour)\b/i
+};
 
 export function classifyCodexError(err: unknown): CodexError {
-  const msg =
-    err instanceof Error
-      ? err.message
-      : typeof err === "string"
-        ? err
-        : "Codex call failed";
+  const msg = err instanceof Error ? err.message : typeof err === "string" ? err : "Codex call failed";
 
-  if (RX_BINARY.test(msg)) {
-    return new CodexError("binary_missing", msg);
-  }
+  if (ERR_PATTERNS.BINARY.test(msg)) return new CodexError("binary_missing", msg);
+  if (ERR_PATTERNS.AUTH.test(msg)) return new CodexError("auth_lost", msg);
 
-  if (RX_AUTH.test(msg)) {
-    return new CodexError("auth_lost", msg);
-  }
-
-  if (RX_RATE_LIMIT.test(msg)) {
+  if (ERR_PATTERNS.RATE_LIMIT.test(msg)) {
     let retryAt: number | undefined;
-    const sec = RX_TRY_AGAIN_SECONDS.exec(msg);
-    const min = RX_TRY_AGAIN_MIN.exec(msg);
-    const hr = RX_TRY_AGAIN_HOUR.exec(msg);
-    if (sec) {
-      const unit = sec[2].toLowerCase();
-      const value = Number(sec[1]);
-      const ms = unit.startsWith("ms") ? value : value * 1000;
+    const timeMatch = ERR_PATTERNS.TIME.exec(msg);
+
+    if (timeMatch) {
+      const value = Number(timeMatch[1]);
+      const unit = timeMatch[2].toLowerCase();
+      let ms = 0;
+
+      if (unit.startsWith("ms")) ms = value;
+      else if (unit.startsWith("s")) ms = value * 1000;
+      else if (unit.startsWith("m")) ms = value * 60_000;
+      else if (unit.startsWith("h")) ms = value * 3_600_000;
+
       retryAt = Date.now() + ms;
-    } else if (min) {
-      retryAt = Date.now() + Number(min[1]) * 60_000;
-    } else if (hr) {
-      retryAt = Date.now() + Number(hr[1]) * 3_600_000;
     }
-    const window: "5h" | "weekly" | "unknown" = RX_WEEKLY.test(msg)
-      ? "weekly"
-      : RX_FIVE_H.test(msg)
-        ? "5h"
-        : "unknown";
+
+    const window = ERR_PATTERNS.WEEKLY.test(msg) ? "weekly" : ERR_PATTERNS.FIVE_H.test(msg) ? "5h" : "unknown";
     return new CodexError("rate_limit", msg, { retryAt, window });
   }
 
@@ -274,31 +187,38 @@ function getLangfuseClient(): Langfuse | null {
   return _langfuse;
 }
 
-function logToLangfuse(args: {
-  task: string;
-  prompt: string;
-  response?: string;
-  success: boolean;
-  error?: string;
-  usage?: unknown;
-}) {
+interface TokenUsage {
+  promptTokens?: number;
+  prompt_tokens?: number;
+  input_tokens?: number;
+  completionTokens?: number;
+  completion_tokens?: number;
+  output_tokens?: number;
+  totalTokens?: number;
+  total_tokens?: number;
+  [key: string]: unknown;
+}
+
+function parseUsage(usageObj?: TokenUsage | null) {
+  if (!usageObj) return undefined;
+  return {
+    promptTokens: usageObj.promptTokens || usageObj.prompt_tokens || usageObj.input_tokens,
+    completionTokens: usageObj.completionTokens || usageObj.completion_tokens || usageObj.output_tokens,
+    totalTokens: usageObj.totalTokens || usageObj.total_tokens,
+  };
+}
+
+function logToLangfuse(args: { task: string; prompt: string; response?: string; success: boolean; error?: string; usage?: unknown }) {
   const lf = getLangfuseClient();
   if (!lf) return;
   try {
     const account = readAccountInfo();
-    const usageObj = args.usage && typeof args.usage === "object" ? (args.usage as Record<string, unknown>) : null;
-    const usage = usageObj ? {
-      promptTokens: (usageObj.promptTokens as number) || (usageObj.prompt_tokens as number) || (usageObj.input_tokens as number) || undefined,
-      completionTokens: (usageObj.completionTokens as number) || (usageObj.completion_tokens as number) || (usageObj.output_tokens as number) || undefined,
-      totalTokens: (usageObj.totalTokens as number) || (usageObj.total_tokens as number) || undefined,
-    } : undefined;
-
     lf.generation({
       name: `codex-${args.task}`,
       model: "codex-cli",
       input: redactSecrets(args.prompt),
       output: redactSecrets(args.response || args.error),
-      usage,
+      usage: parseUsage(args.usage as TokenUsage),
       metadata: {
         authMode: account?.authMode ?? null,
         planType: account?.planType ?? null,
@@ -311,11 +231,104 @@ function logToLangfuse(args: {
   }
 }
 
-/**
- * Run a single turn that must return JSON conforming to the supplied schema.
- * Retries once if the model returns un-parseable text. Throws CodexError on
- * failure so callers can pattern-match on `.kind`.
- */
+// ── Helpers ─────────────────────────────────────────────────────────────
+
+function isBatchTask(taskName: string): boolean {
+  return [
+    "extract_knowledge_graph",
+    "concept_detection",
+    "generate_visual_spec"
+  ].includes(taskName) ||
+  taskName.includes("detect") ||
+  taskName.includes("extract") ||
+  taskName.includes("generate_viz") ||
+  taskName.includes("repair_viz") ||
+  taskName.includes("evaluate");
+}
+
+function shouldBypassOpenRouter(taskName: string, isWebSearch: boolean): boolean {
+  return isWebSearch || taskName === "feynman_gen" || taskName.includes("feynman") || taskName.includes("chat");
+}
+
+function classifyUpstreamErrorKind(message: string): CodexErrorKind {
+  const lower = message.toLowerCase();
+  if (message.includes("429") || lower.includes("rate limit") || lower.includes("too many requests")) return "rate_limit";
+  if (message.includes("401") || message.includes("403") || lower.includes("api key") || lower.includes("auth")) return "auth_lost";
+  return "generic";
+}
+
+async function executeCodexAttempt<T>(args: {
+  thread: CodexThread;
+  prompt: string;
+  outputSchema: object;
+  opts: RunOptions;
+  taskName: string;
+  logMode: "single" | "start" | "resume";
+  debugTaskName: string;
+  overrideThreadId?: string;
+}): Promise<{ data: T; usage: unknown; threadId: string }> {
+  let rawResponse: string | undefined;
+  try {
+    const turn = await args.thread.run(args.prompt, {
+      outputSchema: args.outputSchema,
+      signal: args.opts.signal,
+    });
+    rawResponse = turn.finalResponse;
+    const parsed = parseTurnJson<T>(rawResponse);
+    markOk();
+
+    const threadId = args.thread.id ?? args.overrideThreadId ?? "unknown-thread";
+
+    logToLangfuse({
+      task: args.debugTaskName,
+      prompt: args.prompt,
+      response: rawResponse,
+      success: true,
+      usage: turn.usage,
+    });
+    logFrontendLLMDebug({
+      task: args.debugTaskName,
+      provider: "codex-sdk",
+      model: "codex-cli",
+      mode: args.logMode,
+      threadId,
+      prompt: args.prompt,
+      rawResponse,
+      parsedResponse: parsed,
+      success: true,
+      usage: turn.usage,
+    });
+
+    return { data: parsed, usage: turn.usage, threadId };
+  } catch (err) {
+    const classified = classifyCodexError(err);
+    const threadId = args.thread.id ?? args.overrideThreadId ?? "unknown-thread";
+
+    logToLangfuse({
+      task: args.debugTaskName,
+      prompt: args.prompt,
+      error: classified.message,
+      success: false,
+    });
+    logFrontendLLMDebug({
+      task: args.debugTaskName,
+      provider: "codex-sdk",
+      model: "codex-cli",
+      mode: args.logMode,
+      threadId,
+      prompt: args.prompt,
+      rawResponse,
+      success: false,
+      errorKind: classified.kind,
+      errorMessage: classified.message,
+    });
+
+    throw classified; // Bubble up the classified error
+  }
+}
+
+// ── Core API ────────────────────────────────────────────────────────────
+
 export async function runJson<T>(
   prompt: string,
   outputSchema: object,
@@ -323,15 +336,13 @@ export async function runJson<T>(
 ): Promise<{ data: T; usage: unknown }> {
   const taskName = opts.task ?? opts.debugTask ?? "unknown";
   const groqApiKey = serverEnv("GROQ_API_KEY");
+  const allowGroq = serverEnvFlag("ENABLE_GROQ", true);
   const openrouterApiKey = serverEnv("OPENROUTER_API_KEY");
   const allowOpenRouterFallback = serverEnvFlag("ENABLE_OPENROUTER_FALLBACK", false);
+  const bypassOpenRouter = shouldBypassOpenRouter(taskName, opts.webSearch === true);
+  let upstreamError: CodexError | null = null;
 
-  const isWebSearch = opts.webSearch === true;
-  const isFeynman = taskName === "feynman_gen" || taskName.includes("feynman");
-  const isChat = taskName.includes("chat");
-  const bypassOpenRouter = isWebSearch || isFeynman || isChat;
-
-  if (groqApiKey && !bypassOpenRouter) {
+  if (allowGroq && groqApiKey && !bypassOpenRouter) {
     try {
       const groqResult = await runGroqJson<T>(taskName, prompt, outputSchema, opts.signal);
       logFrontendLLMDebug({
@@ -349,15 +360,8 @@ export async function runJson<T>(
     } catch (groqErr: unknown) {
       const errMsg = groqErr instanceof Error ? groqErr.message : String(groqErr);
       console.warn(`[Groq] All models failed for task '${taskName}': ${errMsg}`);
-      logFrontendLLMDebug({
-        task: taskName,
-        provider: "groq",
-        mode: "single",
-        prompt,
-        success: false,
-        errorKind: "groq_failed",
-        errorMessage: errMsg,
-      });
+      logFrontendLLMDebug({ task: taskName, provider: "groq", mode: "single", prompt, success: false, errorKind: "groq_failed", errorMessage: errMsg });
+      upstreamError = new CodexError(classifyUpstreamErrorKind(errMsg), `Groq failed: ${errMsg}`);
     }
   }
 
@@ -379,130 +383,63 @@ export async function runJson<T>(
     } catch (orErr: unknown) {
       const errMsg = orErr instanceof Error ? orErr.message : String(orErr);
       console.warn(`[OpenRouter] All models failed for task '${taskName}': ${errMsg}`);
+      upstreamError = new CodexError(classifyUpstreamErrorKind(errMsg), `OpenRouter failed: ${errMsg}`);
 
-      const isBatch =
-        taskName === "extract_knowledge_graph" ||
-        taskName === "concept_detection" ||
-        taskName === "generate_visual_spec" ||
-        taskName.includes("detect") ||
-        taskName.includes("extract") ||
-        taskName.includes("generate_viz") ||
-        taskName.includes("repair_viz") ||
-        taskName.includes("evaluate");
+      const isBatch = isBatchTask(taskName);
       const fallbackAllowed = isBatch
         ? serverEnvFlag("ENABLE_CODEX_FALLBACK_FOR_BATCH", false)
         : serverEnvFlag("ENABLE_CODEX_FALLBACK_FOR_INTERACTIVE", false);
 
-      logFrontendLLMDebug({
-        task: taskName,
-        provider: "openrouter",
-        mode: "single",
-        prompt,
-        success: false,
-        errorKind: "openrouter_failed",
-        errorMessage: errMsg,
-      });
+      logFrontendLLMDebug({ task: taskName, provider: "openrouter", mode: "single", prompt, success: false, errorKind: "openrouter_failed", errorMessage: errMsg });
 
       if (!fallbackAllowed) {
         console.warn(`[LLM Router] Codex fallback disabled for task '${taskName}' (isBatch=${isBatch}). Aborting.`);
         throw new CodexError("rate_limit", `OpenRouter failed, and Codex fallback is disabled: ${errMsg}`);
       }
-
       console.log(`[LLM Router] Falling back to Codex for task '${taskName}'...`);
     }
   }
 
-  // Short-circuit: if we know we're inside a rate-limit window, fail fast
-  // without burning another Codex call.
+  if (!serverEnvFlag("ENABLE_CODEX", false) && upstreamError) {
+    throw upstreamError;
+  }
+
   assertCodexEnabled();
   const preflight = preflightHealth();
   if (preflight) throw preflight;
 
-  let lastErr: unknown = null;
+  let lastErr: CodexError | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const thread = buildThread(opts);
-    let rawResponse: string | undefined;
     try {
-      const turn = await thread.run(prompt, {
+      const thread = getCodex().startThread(threadOptions(opts));
+      const res = await executeCodexAttempt<T>({
+        thread,
+        prompt,
         outputSchema,
-        signal: opts.signal,
+        opts,
+        taskName,
+        logMode: "single",
+        debugTaskName: taskName
       });
-      rawResponse = turn.finalResponse;
-      const parsed = parseTurnJson<T>(rawResponse);
-      markOk();
-      logToLangfuse({
-        task: taskName,
-        prompt,
-        response: rawResponse,
-        success: true,
-        usage: turn.usage,
-      });
-      logFrontendLLMDebug({
-        task: taskName,
-        provider: "codex-sdk",
-        model: "codex-cli",
-        mode: "single",
-        threadId: thread.id,
-        prompt,
-        rawResponse,
-        parsedResponse: parsed,
-        success: true,
-        usage: turn.usage,
-      });
-      return { data: parsed, usage: turn.usage };
+      return { data: res.data, usage: res.usage };
     } catch (err) {
-      lastErr = err;
-      const classified = classifyCodexError(err);
-      logToLangfuse({
-        task: taskName,
-        prompt,
-        error: classified.message,
-        success: false,
-      });
-      logFrontendLLMDebug({
-        task: taskName,
-        provider: "codex-sdk",
-        model: "codex-cli",
-        mode: "single",
-        threadId: thread.id,
-        prompt,
-        rawResponse,
-        success: false,
-        errorKind: classified.kind,
-        errorMessage: classified.message,
-      });
-      // Auth/rate-limit/binary failures: don't bother retrying — the
-      // condition isn't going to clear in 200ms. Bubble up immediately so
-      // the in-app banner can take over.
-      if (classified.kind !== "generic") {
-        markError(classified);
-        throw classified;
+      if (err instanceof CodexError) {
+        lastErr = err;
+        if (err.kind !== "generic") {
+          markError(err);
+          throw err;
+        }
+      } else {
+        lastErr = classifyCodexError(err);
+        markError(lastErr);
+        throw lastErr;
       }
     }
   }
-  const finalErr = classifyCodexError(lastErr);
-  if (finalErr.kind !== "generic") markError(finalErr);
-  throw finalErr;
+  if (lastErr && lastErr.kind !== "generic") markError(lastErr);
+  throw lastErr;
 }
 
-/**
- * Thread-aware JSON runner for multi-turn tools (chat).
- *
- * Two modes, exactly one of which must be supplied:
- *   • start  — open a NEW thread and send the full first-turn prompt (system
- *              + document + history). Returns the new `threadId` to persist.
- *              Retries once on a parse blip, like runJson.
- *   • resume — continue an EXISTING thread by `threadId`, sending only the new
- *              turn input. The model still has the document + prior turns in
- *              its own context, so we don't resend them (and the stable prefix
- *              is a guaranteed cache hit). No internal retry: on any generic
- *              failure (including a lost/expired session) the caller falls
- *              back to `start` with full context, so a resume never silently
- *              degrades the answer.
- *
- * Rate-limit / auth / binary errors are classified and thrown immediately in
- * both modes so the health banner takes over.
- */
 export async function runJsonInThread<T>(args: {
   outputSchema: object;
   opts?: RunOptions;
@@ -512,118 +449,59 @@ export async function runJsonInThread<T>(args: {
   assertCodexEnabled();
   const preflight = preflightHealth();
   if (preflight) throw preflight;
+
   const opts = args.opts ?? {};
 
   if (args.resume) {
-    const thread = getCodex().resumeThread(args.resume.threadId, threadOptions(opts));
-    let rawResponse: string | undefined;
     try {
-      const turn = await thread.run(args.resume.input, {
+      const thread = getCodex().resumeThread(args.resume.threadId, threadOptions(opts));
+      const res = await executeCodexAttempt<T>({
+        thread,
+        prompt: args.resume.input,
         outputSchema: args.outputSchema,
-        signal: opts.signal,
+        opts,
+        taskName: opts.debugTask ?? "runJsonInThread-resume",
+        logMode: "resume",
+        debugTaskName: opts.debugTask ?? "codex.runJsonInThread",
+        overrideThreadId: args.resume.threadId
       });
-      rawResponse = turn.finalResponse;
-      const parsed = parseTurnJson<T>(rawResponse);
-      markOk();
-      logToLangfuse({
-        task: opts.debugTask ?? "runJsonInThread-resume",
-        prompt: args.resume.input,
-        response: rawResponse,
-        success: true,
-        usage: turn.usage,
-      });
-      logFrontendLLMDebug({
-        task: opts.debugTask ?? "codex.runJsonInThread",
-        mode: "resume",
-        threadId: thread.id ?? args.resume.threadId,
-        prompt: args.resume.input,
-        rawResponse,
-        parsedResponse: parsed,
-        success: true,
-        usage: turn.usage,
-      });
-      return { data: parsed, usage: turn.usage, threadId: thread.id ?? args.resume.threadId };
+      return { data: res.data, usage: res.usage, threadId: args.resume.threadId };
     } catch (err) {
-      const classified = classifyCodexError(err);
-      logToLangfuse({
-        task: opts.debugTask ?? "runJsonInThread-resume",
-        prompt: args.resume.input,
-        error: classified.message,
-        success: false,
-      });
-      logFrontendLLMDebug({
-        task: opts.debugTask ?? "codex.runJsonInThread",
-        mode: "resume",
-        threadId: thread.id ?? args.resume.threadId,
-        prompt: args.resume.input,
-        rawResponse,
-        success: false,
-        errorKind: classified.kind,
-        errorMessage: classified.message,
-      });
-      if (classified.kind !== "generic") markError(classified);
-      throw classified;
+      if (err instanceof CodexError && err.kind !== "generic") markError(err);
+      throw err;
     }
   }
 
   if (!args.start) throw new Error("runJsonInThread: provide `start` or `resume`");
 
-  let lastErr: unknown = null;
+  let lastErr: CodexError | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const thread = buildThread(opts);
-    let rawResponse: string | undefined;
     try {
-      const turn = await thread.run(args.start.input, {
+      const thread = getCodex().startThread(threadOptions(opts));
+      return await executeCodexAttempt<T>({
+        thread,
+        prompt: args.start.input,
         outputSchema: args.outputSchema,
-        signal: opts.signal,
+        opts,
+        taskName: opts.debugTask ?? "runJsonInThread-start",
+        logMode: "start",
+        debugTaskName: opts.debugTask ?? "codex.runJsonInThread"
       });
-      rawResponse = turn.finalResponse;
-      const parsed = parseTurnJson<T>(rawResponse);
-      markOk();
-      logToLangfuse({
-        task: opts.debugTask ?? "runJsonInThread-start",
-        prompt: args.start.input,
-        response: rawResponse,
-        success: true,
-        usage: turn.usage,
-      });
-      logFrontendLLMDebug({
-        task: opts.debugTask ?? "codex.runJsonInThread",
-        mode: "start",
-        threadId: thread.id,
-        prompt: args.start.input,
-        rawResponse,
-        parsedResponse: parsed,
-        success: true,
-        usage: turn.usage,
-      });
-      return { data: parsed, usage: turn.usage, threadId: thread.id };
     } catch (err) {
-      lastErr = err;
-      const classified = classifyCodexError(err);
-      logToLangfuse({
-        task: opts.debugTask ?? "runJsonInThread-start",
-        prompt: args.start.input,
-        error: classified.message,
-        success: false,
-      });
-      logFrontendLLMDebug({
-        task: opts.debugTask ?? "codex.runJsonInThread",
-        mode: "start",
-        threadId: thread.id,
-        prompt: args.start.input,
-        rawResponse,
-        success: false,
-        errorKind: classified.kind,
-        errorMessage: classified.message,
-      });
-      if (classified.kind !== "generic") {
-        markError(classified);
-        throw classified;
+      if (err instanceof CodexError) {
+        lastErr = err;
+        if (err.kind !== "generic") {
+          markError(err);
+          throw err;
+        }
+      } else {
+        lastErr = classifyCodexError(err);
+        markError(lastErr);
+        throw lastErr;
       }
     }
   }
-  const finalErr = classifyCodexError(lastErr);
-  if (finalErr.kind !== "generic") markError(finalErr);
-  throw finalErr;
+
+  if (lastErr && lastErr.kind !== "generic") markError(lastErr);
+  throw lastErr;
 }

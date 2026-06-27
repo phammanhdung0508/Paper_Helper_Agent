@@ -9,6 +9,10 @@ export type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   ts: number;
+  /** Langfuse trace ID — set when the backend mirrors the turn. */
+  traceId?: string;
+  /** User feedback: "up" | "down". Write-once after the user rates. */
+  feedback?: "up" | "down";
 };
 
 export type ChatThread = {

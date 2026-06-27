@@ -18,6 +18,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import {
   Sigma,
   MessageSquare,
@@ -28,6 +29,7 @@ import {
   ChevronDown,
   MoreHorizontal,
   Download,
+  ExternalLink,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -115,6 +117,7 @@ type Props = {
     loadingDetail?: string;
     onRuntimeError?: (msg: string) => void;
     activeTagError?: string | null;
+    activeTagId?: string | null;
   };
 };
 
@@ -162,10 +165,21 @@ export default function RightPane({ docId, mode, onModeChange, visualizer }: Pro
       </div>
 
       {mode === "visualizer" && visualizer.spec && (
-        <footer className="shrink-0 border-t border-[var(--border-subtle)] bg-white px-5 py-3">
-          <p className="text-[12.5px] leading-relaxed text-[var(--ink-700)]">
+        <footer className="flex shrink-0 items-start justify-between gap-3 border-t border-[var(--border-subtle)] bg-white px-5 py-3">
+          <p className="min-w-0 text-[12.5px] leading-relaxed text-[var(--ink-700)]">
             {visualizer.spec.caption}
           </p>
+          {visualizer.activeTagId && (
+            <Link
+              href={`/visual/${docId}/${visualizer.activeTagId}`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[var(--border-subtle)] px-3 py-1.5 text-[11px] font-medium text-[var(--ink-700)] hover:bg-[var(--surface-sunken)]"
+            >
+              Full view
+              <ExternalLink className="h-3 w-3" />
+            </Link>
+          )}
         </footer>
       )}
       {mode === "visualizer" && visualizer.activeTagError && (

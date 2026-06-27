@@ -4,6 +4,14 @@ import path from "path";
 const backendEnvCache = new Map<string, string>();
 let backendEnvLoaded = false;
 
+function stripQuotes(value: string): string {
+  if (!value) return value;
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
 function loadBackendEnv() {
   if (backendEnvLoaded) return;
   backendEnvLoaded = true;
@@ -25,9 +33,8 @@ function loadBackendEnv() {
       if (eq === -1) continue;
       const key = line.slice(0, eq).trim();
       let value = line.slice(eq + 1).trim();
-      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-        value = value.slice(1, -1);
-      }
+      value = stripQuotes(value);
+
       backendEnvCache.set(key, value);
     }
   } catch {
@@ -41,8 +48,8 @@ export function serverEnv(name: string): string | undefined {
     loadBackendEnv();
     value = backendEnvCache.get(name);
   }
-  if (value && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
-    value = value.slice(1, -1);
+  if (value) {
+    value = stripQuotes(value);
   }
   return value;
 }

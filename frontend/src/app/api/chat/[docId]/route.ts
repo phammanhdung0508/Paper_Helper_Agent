@@ -187,6 +187,25 @@ export async function POST(
     if (codexThreadId) liveChat.codexThreadId = codexThreadId;
     saveWorkContext(reloaded);
 
+    // Fire-and-forget: mirror this turn to FastAPI backend so Langfuse
+    // gets a trace. We capture the trace_id and write it back onto the
+    // assistant message for later feedback scoring.
+    mirrorToFastApi(docId, message, reply.reply, chat.messages)
+      .then((traceId) => {
+        if (traceId) {
+          const wc2 = loadWorkContext(docId);
+          const c2 = wc2.chats.find((c) => c.id === chat.id);
+          const msg = c2?.messages.findLast(
+            (m) => m.role === "assistant" && m.ts === assistantMsg.ts,
+          );
+          if (msg) {
+            msg.traceId = traceId;
+            saveWorkContext(wc2);
+          }
+        }
+      })
+      .catch(() => {}); // best-effort — never block the reply
+
     // NB: the knowledge-graph evaluation is intentionally NOT scheduled here.
     // The client triggers a single pass when the student leaves the Chat tab
     // (see viewer-client), so a multi-message, multi-thread chat session costs
@@ -216,4 +235,52 @@ export async function DELETE(
   wc.chats = wc.chats.filter((c) => c.id !== chatId);
   saveWorkContext(wc);
   return NextResponse.json({ ok: true });
+}
+
+// ---------------------------------------------------------------------------
+// Langfuse trace mirroring
+// ---------------------------------------------------------------------------
+
+/**
+ * Sends the current turn to FastAPI's /api/chat endpoint so Langfuse
+ * records a trace. Returns the trace_id on success, or null on failure.
+ *
+ * This is intentionally best-effort: if the FastAPI backend is offline the
+ * chat still works — users just won't see feedback buttons for that turn.
+ */
+async function mirrorToFastApi(
+  docId: string,
+  userMessage: string,
+  _aiReply: string,
+  history: ChatMessage[],
+): Promise<string | null> {
+  try {
+    // Rebuild chat_history pairs from prior turns (exclude the current one)
+    const chatHistory: [string, string][] = [];
+    for (let i = 0; i < history.length - 1; i++) {
+      const m = history[i];
+      if (m.role === "user") {
+        const next = history[i + 1];
+        if (next?.role === "assistant") {
+          chatHistory.push([m.content, next.content]);
+          i++; // skip the assistant message
+        }
+      }
+    }
+
+    const r = await fetch("http://localhost:8000/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        query: userMessage,
+        chat_history: chatHistory,
+        doc_id: docId,
+      }),
+    });
+    if (!r.ok) return null;
+    const j = (await r.json()) as { trace_id?: string };
+    return j.trace_id ?? null;
+  } catch {
+    return null;
+  }
 }

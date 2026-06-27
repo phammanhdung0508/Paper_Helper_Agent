@@ -980,6 +980,11 @@ class LLMRouterClient(BaseLLMClient):
         # 3. Try each provider in order
         last_error: Optional[LLMError] = None
         for provider_name in providers:
+            if provider_name == "groq" and not config.ENABLE_GROQ:
+                print(f"[LLM Router] Skipping provider 'groq' for task '{task}' because ENABLE_GROQ=false.")
+                last_error = LLMError("groq_disabled", "Groq provider disabled by ENABLE_GROQ=false.")
+                continue
+
             if provider_name == "codex":
                 if not config.ENABLE_CODEX:
                     print(f"[LLM Router] Skipping provider 'codex' for task '{task}' because ENABLE_CODEX=false.")

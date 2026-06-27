@@ -25,17 +25,18 @@ GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 # LLM Routing Config
 ENABLE_LLM_FALLBACK = os.getenv("ENABLE_LLM_FALLBACK", "true").lower() in ("true", "1", "yes")
 ENABLE_LLM_DEBUG_LOG = os.getenv("ENABLE_LLM_DEBUG_LOG", "false").lower() in ("true", "1", "yes")
+ENABLE_GROQ = os.getenv("ENABLE_GROQ", "true").lower() in ("true", "1", "yes")
 ENABLE_OPENROUTER_FALLBACK = os.getenv("ENABLE_OPENROUTER_FALLBACK", "false").lower() in ("true", "1", "yes")
-ENABLE_CODEX = os.getenv("ENABLE_CODEX", "false").lower() in ("true", "1", "yes")
-LLM_ROUTER_PROVIDER = os.getenv("LLM_ROUTER_PROVIDER", "local,groq")
-LLM_GENERAL_PROVIDER = os.getenv("LLM_GENERAL_PROVIDER", "groq")
-LLM_RAG_PROVIDER = os.getenv("LLM_RAG_PROVIDER", "groq")
-LLM_KG_PROVIDER = os.getenv("LLM_KG_PROVIDER", "groq")
-LLM_VISUAL_PROVIDER = os.getenv("LLM_VISUAL_PROVIDER", "groq")
-LLM_EVAL_PROVIDER = os.getenv("LLM_EVAL_PROVIDER", "groq")
+ENABLE_CODEX = os.getenv("ENABLE_CODEX", "true").lower() in ("true", "1", "yes")
+LLM_ROUTER_PROVIDER = os.getenv("LLM_ROUTER_PROVIDER", "local,groq,codex")
+LLM_GENERAL_PROVIDER = os.getenv("LLM_GENERAL_PROVIDER", "groq,codex")
+LLM_RAG_PROVIDER = os.getenv("LLM_RAG_PROVIDER", "groq,codex")
+LLM_KG_PROVIDER = os.getenv("LLM_KG_PROVIDER", "groq,codex")
+LLM_VISUAL_PROVIDER = os.getenv("LLM_VISUAL_PROVIDER", "groq,codex")
+LLM_EVAL_PROVIDER = os.getenv("LLM_EVAL_PROVIDER", "groq,codex")
 
-ENABLE_CODEX_FALLBACK_FOR_BATCH = os.getenv("ENABLE_CODEX_FALLBACK_FOR_BATCH", "false").lower() in ("true", "1", "yes")
-ENABLE_CODEX_FALLBACK_FOR_INTERACTIVE = os.getenv("ENABLE_CODEX_FALLBACK_FOR_INTERACTIVE", "false").lower() in ("true", "1", "yes")
+ENABLE_CODEX_FALLBACK_FOR_BATCH = os.getenv("ENABLE_CODEX_FALLBACK_FOR_BATCH", "true").lower() in ("true", "1", "yes")
+ENABLE_CODEX_FALLBACK_FOR_INTERACTIVE = os.getenv("ENABLE_CODEX_FALLBACK_FOR_INTERACTIVE", "true").lower() in ("true", "1", "yes")
 
 
 # Workspace Folders

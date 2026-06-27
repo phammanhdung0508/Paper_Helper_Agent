@@ -561,6 +561,7 @@ export default function ViewerClient({ docId }: { docId: string }) {
                     ? "Click any colored tag in the document to render its concept here."
                     : "Click any tag to generate its visualization. (manual mode — toggle auto-generate in settings)",
               activeTagError: activeTag?.error ?? null,
+              activeTagId,
             }}
           />
         </div>

@@ -10,7 +10,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Trash2, Send, MessageSquare, RefreshCw } from "lucide-react";
+import { Plus, Trash2, Send, MessageSquare, RefreshCw, ThumbsUp, ThumbsDown } from "lucide-react";
 import type { ChatThread } from "@/lib/work-context-types";
 import { consumePrefill } from "./prefill";
 
@@ -180,6 +180,41 @@ export default function ChatView({ docId }: Props) {
     }
   }, [activeId, docId, draft, sending]);
 
+  const handleFeedback = useCallback(
+    async (chatId: string, msgIndex: number, rating: "up" | "down") => {
+      const chat = chats?.find((c) => c.id === chatId);
+      const msg = chat?.messages[msgIndex];
+      if (!msg?.traceId || msg.feedback) return;
+
+      // Optimistic UI update
+      setChats(
+        (prev) =>
+          prev?.map((c) =>
+            c.id === chatId
+              ? {
+                  ...c,
+                  messages: c.messages.map((m, i) =>
+                    i === msgIndex ? { ...m, feedback: rating } : m,
+                  ),
+                }
+              : c,
+          ) ?? null,
+      );
+
+      // Send to FastAPI via Next.js fallback proxy
+      try {
+        await fetch("/api/feedback", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ rating, trace_id: msg.traceId }),
+        });
+      } catch {
+        // Best-effort — the optimistic UI stays regardless.
+      }
+    },
+    [chats],
+  );
+
   if (chats === null) {
     return (
       <div className="flex h-full items-center justify-center text-[12px] text-[var(--ink-500)]">
@@ -257,7 +292,14 @@ export default function ChatView({ docId }: Props) {
               </p>
             )}
             {active.messages.map((m, i) => (
-              <Bubble key={i} role={m.role} content={m.content} />
+              <Bubble
+                key={i}
+                role={m.role}
+                content={m.content}
+                traceId={m.traceId}
+                feedback={m.feedback}
+                onFeedback={(rating) => handleFeedback(active.id, i, rating)}
+              />
             ))}
             {sending && (
               <Bubble role="assistant" content="…" pulsing />
@@ -308,21 +350,66 @@ function Bubble({
   role,
   content,
   pulsing,
+  traceId,
+  feedback,
+  onFeedback,
 }: {
   role: "user" | "assistant";
   content: string;
   pulsing?: boolean;
+  traceId?: string;
+  feedback?: "up" | "down";
+  onFeedback?: (rating: "up" | "down") => void;
 }) {
   const isUser = role === "user";
   return (
     <div className={`mb-3 flex ${isUser ? "justify-end" : "justify-start"}`}>
-      <div
-        className={`max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-[13px] leading-relaxed ${isUser
-            ? "bg-[var(--ink-900)] text-white"
-            : "bg-[var(--surface-sunken)] text-[var(--ink-900)]"
-          } ${pulsing ? "animate-pulse" : ""}`}
-      >
-        {content}
+      <div className="max-w-[85%]">
+        <div
+          className={`whitespace-pre-wrap rounded-lg px-3 py-2 text-[13px] leading-relaxed ${isUser
+              ? "bg-[var(--ink-900)] text-white"
+              : "bg-[var(--surface-sunken)] text-[var(--ink-900)]"
+            } ${pulsing ? "animate-pulse" : ""}`}
+        >
+          {content}
+        </div>
+        {/* Feedback buttons — assistant bubbles with a Langfuse trace only */}
+        {!isUser && !pulsing && traceId && (
+          <div className="mt-1 flex gap-1 pl-1">
+            <button
+              type="button"
+              onClick={() => onFeedback?.("up")}
+              disabled={!!feedback}
+              className={`rounded p-1 transition-colors ${
+                feedback === "up"
+                  ? "text-emerald-500"
+                  : feedback
+                    ? "text-[var(--ink-300)] cursor-default"
+                    : "text-[var(--ink-400)] hover:text-emerald-500 hover:bg-emerald-50"
+              }`}
+              title="Helpful"
+              aria-label="Mark as helpful"
+            >
+              <ThumbsUp className="h-3 w-3" />
+            </button>
+            <button
+              type="button"
+              onClick={() => onFeedback?.("down")}
+              disabled={!!feedback}
+              className={`rounded p-1 transition-colors ${
+                feedback === "down"
+                  ? "text-rose-500"
+                  : feedback
+                    ? "text-[var(--ink-300)] cursor-default"
+                    : "text-[var(--ink-400)] hover:text-rose-500 hover:bg-rose-50"
+              }`}
+              title="Not helpful"
+              aria-label="Mark as not helpful"
+            >
+              <ThumbsDown className="h-3 w-3" />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
