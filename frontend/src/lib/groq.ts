@@ -2,22 +2,25 @@ import { Langfuse } from "langfuse";
 import { redactSecrets } from "./llm-debug";
 import { serverEnv } from "./server-env";
 
-const CODE_VIS_MODELS = [
-  "openai/gpt-oss-120b:free",
-  "qwen/qwen3-coder:free",
+const GENERAL_MODELS = [
+  "llama-3.1-8b-instant",
+  "groq/compound-mini",
 ];
 
 const EXTRACTION_MODELS = [
-  "openai/gpt-oss-120b:free",
-  "qwen/qwen3-coder:free",
+  "llama-3.1-8b-instant",
+  "groq/compound-mini",
 ];
 
-function getFamilyPrefix(modelId: string): string {
-  if (modelId.includes("/")) {
-    return modelId.split("/")[0];
-  }
-  return modelId;
-}
+const CODE_VIS_MODELS = [
+  "qwen/qwen3-32b",
+  "qwen/qwen3.6-27b",
+];
+
+const EVAL_MODELS = [
+  "llama-3.1-8b-instant",
+  "groq/compound-mini",
+];
 
 let _langfuse: Langfuse | null = null;
 function getLangfuseClient(): Langfuse | null {
@@ -30,7 +33,6 @@ function getLangfuseClient(): Langfuse | null {
   return _langfuse;
 }
 
-// Log to langfuse asynchronously (fire-and-forget, non-blocking)
 function logToLangfuse(args: {
   task: string;
   model: string;
@@ -44,105 +46,95 @@ function logToLangfuse(args: {
   if (!lf) return;
   try {
     lf.generation({
-      name: `openrouter-${args.task}`,
+      name: `groq-${args.task}`,
       model: args.model,
       input: redactSecrets(args.prompt),
       output: redactSecrets(args.response || args.error),
       usage: args.usage,
       metadata: {
-        provider: "openrouter",
+        provider: "groq",
         status: args.success ? "success" : "failed",
       },
     });
-    // Do NOT await flushAsync on the critical path, just call it to schedule flush
     lf.flushAsync().catch(() => { });
   } catch (e) {
-    console.warn("Failed to log OpenRouter trace to Langfuse:", e);
+    console.warn("Failed to log Groq trace to Langfuse:", e);
   }
 }
 
-export type OpenRouterResult<T> = {
+export type GroqResult<T> = {
   data: T;
   model: string;
   usage: unknown;
   fallbackReason?: string;
-  codexFallbackUsed?: boolean;
 };
 
-export async function runOpenRouterJson<T>(
+export async function runGroqJson<T>(
   task: string,
   prompt: string,
   outputSchema: object,
   signal?: AbortSignal,
-): Promise<OpenRouterResult<T>> {
-  const apiKey = serverEnv("OPENROUTER_API_KEY");
-  const baseUrl = serverEnv("OPENROUTER_BASE_URL") || "https://openrouter.ai/api/v1";
+): Promise<GroqResult<T>> {
+  const apiKey = serverEnv("GROQ_API_KEY");
+  const baseUrl = serverEnv("GROQ_BASE_URL") || "https://api.groq.com/openai/v1";
 
   if (!apiKey) {
-    throw new Error("OPENROUTER_API_KEY not configured.");
+    throw new Error("GROQ_API_KEY not configured.");
   }
 
-  // Choose the chain
-  const isCode = task === "generate_visual_spec" || task.startsWith("generate_viz") || task.startsWith("repair_viz");
-  const models = isCode ? CODE_VIS_MODELS : EXTRACTION_MODELS;
+  const models = modelsForTask(task);
+  const customModel = serverEnv("GROQ_MODEL");
+  if (customModel && !models.includes(customModel)) {
+    models.unshift(customModel);
+  }
 
   const schemaInstruction = JSON.stringify(outputSchema, null, 2);
   const fullPrompt = `${prompt}\n\nReturn ONLY valid JSON matching this schema:\n${schemaInstruction}\n\nOutput ONLY the JSON object, no markdown fences, no extra text.`;
 
-  const failedFamilies = new Set<string>();
   let lastError: Error | null = null;
   const fallbackReasons: string[] = [];
 
   for (const modelId of models) {
-    const family = getFamilyPrefix(modelId);
-    if (failedFamilies.has(family)) {
-      console.log(`[OpenRouter] Skipping model '${modelId}' because family '${family}' is rate-limited.`);
-      continue;
-    }
-
-    // Try twice for JSON parsing retries
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        console.log(`[OpenRouter] Calling model '${modelId}' for task '${task}' (attempt ${attempt + 1})...`);
+        console.log(`[Groq] Calling model '${modelId}' for task '${task}' (attempt ${attempt + 1})...`);
 
         const response = await fetch(`${baseUrl}/chat/completions`, {
           method: "POST",
           headers: {
             "Authorization": `Bearer ${apiKey}`,
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://paper-helper-agent.local",
-            "X-Title": "Paper Helper Agent",
           },
           body: JSON.stringify({
             model: modelId,
             messages: [
               { role: "system", content: `You are a structured JSON assistant. Task: ${task}` },
-              { role: "user", content: fullPrompt }
+              { role: "user", content: fullPrompt },
             ],
             temperature: 0,
-            response_format: { type: "json_object" }
+            max_tokens: 2048,
           }),
           signal,
         });
 
         if (!response.ok) {
           const errText = await response.text();
-          throw new Error(`OpenRouter HTTP ${response.status}: ${errText}`);
+          throw new Error(`Groq HTTP ${response.status}: ${errText}`);
         }
 
         const resData = await response.json();
         let choiceText = resData.choices?.[0]?.message?.content?.trim();
         if (!choiceText) {
-          throw new Error("OpenRouter returned empty message content.");
+          throw new Error("Groq returned empty message content.");
         }
 
-        // Clean markdown fences
         if (choiceText.startsWith("```")) {
           choiceText = choiceText
             .replace(/^```(?:json)?\s*/i, "")
             .replace(/```$/i, "")
             .trim();
         }
+        choiceText = extractJsonObject(choiceText);
 
         let parsed: T;
         try {
@@ -156,11 +148,10 @@ export async function runOpenRouterJson<T>(
           throw new Error(`Failed to parse or validate JSON response: ${jeMsg}. Content was: ${choiceText}`);
         }
 
-        // Log success to Langfuse
         const usageData = resData.usage ? {
           promptTokens: resData.usage.prompt_tokens,
           completionTokens: resData.usage.completion_tokens,
-          totalTokens: resData.usage.total_tokens
+          totalTokens: resData.usage.total_tokens,
         } : undefined;
 
         logToLangfuse({
@@ -169,7 +160,7 @@ export async function runOpenRouterJson<T>(
           prompt: fullPrompt,
           response: choiceText,
           success: true,
-          usage: usageData
+          usage: usageData,
         });
 
         return {
@@ -177,34 +168,60 @@ export async function runOpenRouterJson<T>(
           model: modelId,
           usage: resData.usage,
           fallbackReason: fallbackReasons.join("; ") || undefined,
-          codexFallbackUsed: false
         };
-
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);
         lastError = err instanceof Error ? err : new Error(errMsg);
-        const isRateLimit = errMsg.includes("429") || errMsg.toLowerCase().includes("rate limit") || errMsg.toLowerCase().includes("too many requests");
-
-        console.warn(`[OpenRouter] Model '${modelId}' failed: ${errMsg}`);
+        console.warn(`[Groq] Model '${modelId}' failed: ${errMsg}`);
         fallbackReasons.push(`${modelId}: ${errMsg}`);
-
         logToLangfuse({
           task,
           model: modelId,
           prompt: fullPrompt,
           error: errMsg,
-          success: false
+          success: false,
         });
-
-        if (isRateLimit) {
-          failedFamilies.add(family);
-          break; // Break attempt loop to proceed to next model family
+        if (isAuthError(errMsg)) {
+          throw lastError;
+        }
+        if (isRateLimit(errMsg)) {
+          break;
         }
       }
     }
   }
 
-  throw lastError || new Error("All OpenRouter models in fallback chain failed.");
+  throw lastError || new Error("All Groq models in fallback chain failed.");
+}
+
+function modelsForTask(task: string): string[] {
+  if (task === "generate_visual_spec" || task.startsWith("generate_viz") || task.startsWith("repair_viz")) {
+    return [...CODE_VIS_MODELS];
+  }
+  if (task === "evaluate_mastery_response" || task.includes("evaluate")) {
+    return [...EVAL_MODELS];
+  }
+  if (task === "extract_knowledge_graph" || task === "concept_detection" || task.includes("extract") || task.includes("detect")) {
+    return [...EXTRACTION_MODELS];
+  }
+  return [...GENERAL_MODELS];
+}
+
+function isRateLimit(message: string): boolean {
+  const lower = message.toLowerCase();
+  return message.includes("429") || lower.includes("rate limit") || lower.includes("too many requests");
+}
+
+function isAuthError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return message.includes("401") || message.includes("403") || lower.includes("api key") || lower.includes("auth");
+}
+
+function extractJsonObject(text: string): string {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end === -1 || end < start) return text;
+  return text.slice(start, end + 1);
 }
 
 interface JsonSchema {
@@ -228,10 +245,7 @@ function validateSchema(data: unknown, schema: JsonSchema, path = "root"): void 
     if (typeof data !== "object" || data === null || Array.isArray(data)) {
       throw new Error(`Validation error at ${path}: expected object, got ${typeof data}`);
     }
-
     const obj = data as Record<string, unknown>;
-
-    // Check required fields
     if (Array.isArray(schema.required)) {
       for (const reqKey of schema.required) {
         if (!(reqKey in obj) || obj[reqKey] === undefined) {
@@ -239,8 +253,6 @@ function validateSchema(data: unknown, schema: JsonSchema, path = "root"): void 
         }
       }
     }
-
-    // Check properties
     if (schema.properties) {
       for (const [key, val] of Object.entries(obj)) {
         if (schema.properties[key]) {
@@ -254,11 +266,9 @@ function validateSchema(data: unknown, schema: JsonSchema, path = "root"): void 
     if (!Array.isArray(data)) {
       throw new Error(`Validation error at ${path}: expected array, got ${typeof data}`);
     }
-
     if (schema.maxItems !== undefined && data.length > schema.maxItems) {
       throw new Error(`Validation error at ${path}: array length ${data.length} exceeds maxItems ${schema.maxItems}`);
     }
-
     if (schema.items) {
       for (let i = 0; i < data.length; i++) {
         validateSchema(data[i], schema.items, `${path}[${i}]`);
@@ -287,9 +297,7 @@ function validateSchema(data: unknown, schema: JsonSchema, path = "root"): void 
     if (schema.minimum !== undefined && data < schema.minimum) {
       throw new Error(`Validation error at ${path}: value ${data} is less than minimum ${schema.minimum}`);
     }
-  } else if (schema.const !== undefined) {
-    if (data !== schema.const) {
-      throw new Error(`Validation error at ${path}: expected const '${schema.const}', got '${data}'`);
-    }
+  } else if (schema.const !== undefined && data !== schema.const) {
+    throw new Error(`Validation error at ${path}: expected const '${schema.const}', got '${data}'`);
   }
 }

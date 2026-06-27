@@ -48,7 +48,7 @@ class LLMError(Exception):
 # Categories that should trigger fallback to the next provider
 FALLBACK_CATEGORIES = {
     "rate_limit", "auth_lost", "timeout", "subprocess_crash",
-    "empty_output", "invalid_json", "unknown",
+    "empty_output", "invalid_json", "not_found", "unknown",
 }
 
 
@@ -593,6 +593,193 @@ class OpenRouterClient(BaseLLMClient):
 
 
 # ---------------------------------------------------------------------------
+# Groq client (OpenAI-compatible API with task-specific model fallback)
+# ---------------------------------------------------------------------------
+
+class GroqClient(BaseLLMClient):
+    """Uses Groq's OpenAI-compatible API with task-specific model chains."""
+
+    provider_name = "groq"
+    model_name = "llama-3.1-8b-instant"
+
+    GENERAL_MODELS = [
+        "llama-3.1-8b-instant",
+        "groq/compound-mini",
+    ]
+    EXTRACTION_MODELS = [
+        "llama-3.1-8b-instant",
+        "groq/compound-mini",
+    ]
+    CODE_VIS_MODELS = [
+        "qwen/qwen3-32b",
+        "qwen/qwen3.6-27b",
+    ]
+    EVAL_MODELS = [
+        "llama-3.1-8b-instant",
+        "groq/compound-mini",
+    ]
+
+    async def run_json(
+        self,
+        task: str,
+        prompt: str,
+        schema: type[BaseModel],
+        is_retry: bool = False,
+        trace_id: str = "",
+        callbacks: Optional[List[Any]] = None,
+    ) -> BaseModel:
+        if not config.GROQ_API_KEY:
+            raise LLMError("auth_lost", "GROQ_API_KEY is not configured.")
+
+        from openai import OpenAI
+
+        schema_instruction = json.dumps(schema.schema(), indent=2)
+        full_prompt = (
+            f"Task: {task}\n\n"
+            f"{prompt}\n\n"
+            "Return ONLY valid JSON matching this schema:\n"
+            f"{schema_instruction}\n\n"
+            "Output ONLY the JSON object, no markdown fences, no extra text."
+        )
+
+        models_to_try = self._models_for_task(task)
+        custom_model = config.GROQ_MODEL
+        if custom_model and custom_model not in models_to_try:
+            models_to_try.insert(0, custom_model)
+
+        last_error = None
+        for model_id in models_to_try:
+            lf_generation = None
+            lf = get_langfuse_client()
+            if lf:
+                if not trace_id:
+                    trace_id = str(uuid.uuid4())
+                try:
+                    lf_generation = lf.generation(
+                        trace_id=trace_id,
+                        name=f"groq-{task}",
+                        model=model_id,
+                        input=full_prompt,
+                    )
+                except Exception as e:
+                    print(f"Error starting Groq Langfuse generation: {e}")
+
+            try:
+                client = OpenAI(base_url=config.GROQ_BASE_URL, api_key=config.GROQ_API_KEY)
+                response = await asyncio.to_thread(
+                    client.chat.completions.create,
+                    model=model_id,
+                    messages=[
+                        {"role": "system", "content": f"You are a structured JSON assistant. Task: {task}"},
+                        {"role": "user", "content": full_prompt},
+                    ],
+                    temperature=0,
+                    max_tokens=2048,
+                )
+
+                response_text = response.choices[0].message.content.strip()
+                if response_text.startswith("```"):
+                    lines = response_text.split("\n")
+                    lines = [line for line in lines if not line.strip().startswith("```")]
+                    response_text = "\n".join(lines).strip()
+                response_text = _extract_json_object(response_text)
+
+                try:
+                    json_data = json.loads(response_text)
+                    parsed = schema.model_validate(json_data)
+                except Exception as ve:
+                    _debug_log_llm(
+                        task, self.provider_name, model_id, prompt, schema,
+                        raw_response=response_text, success=False,
+                        error_category="invalid_json", error_message=str(ve),
+                    )
+                    if lf_generation:
+                        try:
+                            lf_generation.end(
+                                output=response_text,
+                                metadata={"status": "failed", "error_category": "invalid_json", "model": model_id},
+                            )
+                            flush_langfuse()
+                        except Exception:
+                            pass
+                    last_error = LLMError("invalid_json", f"Groq ({model_id}) JSON validation failed: {ve}")
+                    continue
+
+                if lf_generation:
+                    try:
+                        usage = {}
+                        if response.usage:
+                            usage = {
+                                "input": response.usage.prompt_tokens,
+                                "output": response.usage.completion_tokens,
+                                "total": response.usage.total_tokens,
+                            }
+                        lf_generation.end(
+                            output=response_text,
+                            metadata={"status": "success", "provider": "groq", "model": model_id},
+                            usage=usage,
+                        )
+                        flush_langfuse()
+                    except Exception as e:
+                        print(f"Error ending Groq Langfuse generation: {e}")
+                _debug_log_llm(
+                    task, self.provider_name, model_id, prompt, schema,
+                    raw_response=response_text, parsed_response=parsed, success=True,
+                )
+                self.model_name = model_id
+                return parsed
+
+            except Exception as e:
+                err_str = str(e).lower()
+                category = "unknown"
+                if "rate limit" in err_str or "429" in err_str:
+                    category = "rate_limit"
+                elif any(kw in err_str for kw in ["api key", "auth", "permission", "403", "401"]):
+                    category = "auth_lost"
+                elif "not found" in err_str or "404" in err_str:
+                    category = "not_found"
+                elif "timeout" in err_str:
+                    category = "timeout"
+
+                if lf_generation:
+                    try:
+                        lf_generation.end(
+                            output=str(e),
+                            metadata={"status": "failed", "error_category": category, "model": model_id},
+                        )
+                        flush_langfuse()
+                    except Exception:
+                        pass
+
+                print(f"[Groq] Model '{model_id}' failed: [{category}] {e}")
+                last_error = LLMError(category, f"Groq ({model_id}): {e}")
+                if category == "auth_lost":
+                    raise last_error
+                continue
+
+        if last_error:
+            raise last_error
+        raise LLMError("unknown", "Groq: all models in fallback chain failed.")
+
+    def _models_for_task(self, task: str) -> List[str]:
+        if task == "generate_visual_spec" or task.startswith("generate_viz") or task.startswith("repair_viz"):
+            return list(self.CODE_VIS_MODELS)
+        if task == "evaluate_mastery_response" or "evaluate" in task:
+            return list(self.EVAL_MODELS)
+        if task in ("extract_knowledge_graph", "concept_detection") or "extract" in task or "detect" in task:
+            return list(self.EXTRACTION_MODELS)
+        return list(self.GENERAL_MODELS)
+
+
+def _extract_json_object(text: str) -> str:
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return text
+    return text[start:end + 1]
+
+
+# ---------------------------------------------------------------------------
 # Mock client (deterministic responses for tests & offline mode)
 # ---------------------------------------------------------------------------
 
@@ -715,6 +902,7 @@ class LocalRuleClient(BaseLLMClient):
 
 _PROVIDER_REGISTRY = {
     "codex": CodexCliClient,
+    "groq": GroqClient,
     "openai": OpenAIDirectClient,
     "openrouter": OpenRouterClient,
     "mock": MockLLMClient,

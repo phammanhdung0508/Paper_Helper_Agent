@@ -22,6 +22,8 @@ import { CODEX_SCRATCH_DIR } from "./paths";
 import { logFrontendLLMDebug, redactSecrets } from "./llm-debug";
 import { readAccountInfo } from "./codex-account";
 import { runOpenRouterJson } from "./openrouter";
+import { runGroqJson } from "./groq";
+import { serverEnv, serverEnvFlag } from "./server-env";
 
 let _codex: Codex | null = null;
 
@@ -313,14 +315,46 @@ export async function runJson<T>(
   opts: RunOptions = {},
 ): Promise<{ data: T; usage: unknown }> {
   const taskName = opts.task ?? opts.debugTask ?? "unknown";
-  const openrouterApiKey = process.env.OPENROUTER_API_KEY;
+  const groqApiKey = serverEnv("GROQ_API_KEY");
+  const openrouterApiKey = serverEnv("OPENROUTER_API_KEY");
+  const allowOpenRouterFallback = serverEnvFlag("ENABLE_OPENROUTER_FALLBACK", false);
 
   const isWebSearch = opts.webSearch === true;
   const isFeynman = taskName === "feynman_gen" || taskName.includes("feynman");
   const isChat = taskName.includes("chat");
   const bypassOpenRouter = isWebSearch || isFeynman || isChat;
 
-  if (openrouterApiKey && !bypassOpenRouter) {
+  if (groqApiKey && !bypassOpenRouter) {
+    try {
+      const groqResult = await runGroqJson<T>(taskName, prompt, outputSchema, opts.signal);
+      logFrontendLLMDebug({
+        task: taskName,
+        provider: "groq",
+        model: groqResult.model,
+        mode: "single",
+        prompt,
+        rawResponse: JSON.stringify(groqResult.data),
+        parsedResponse: groqResult.data,
+        success: true,
+        usage: groqResult.usage,
+      });
+      return { data: groqResult.data, usage: groqResult.usage };
+    } catch (groqErr: unknown) {
+      const errMsg = groqErr instanceof Error ? groqErr.message : String(groqErr);
+      console.warn(`[Groq] All models failed for task '${taskName}': ${errMsg}`);
+      logFrontendLLMDebug({
+        task: taskName,
+        provider: "groq",
+        mode: "single",
+        prompt,
+        success: false,
+        errorKind: "groq_failed",
+        errorMessage: errMsg,
+      });
+    }
+  }
+
+  if (openrouterApiKey && !bypassOpenRouter && allowOpenRouterFallback) {
     try {
       const orResult = await runOpenRouterJson<T>(taskName, prompt, outputSchema, opts.signal);
       logFrontendLLMDebug({

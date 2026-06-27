@@ -20,6 +20,7 @@ from app import database
 from app.llm_client import (
     BaseLLMClient,
     CodexCliClient,
+    GroqClient,
     OpenRouterClient,
     OpenAIDirectClient,
     MockLLMClient,
@@ -75,7 +76,7 @@ def test_provider_order_route_query():
     assert len(providers) > 0
     # Should contain only valid provider names
     for p in providers:
-        assert p in ("codex", "openrouter", "openai", "mock", "local")
+        assert p in ("codex", "groq", "openrouter", "openai", "mock", "local")
 
 
 def test_provider_order_general_chat():
@@ -344,6 +345,44 @@ def test_openrouter_429_family_skipping():
         assert mock_create.call_args_list[0][1]["model"] == "meta-llama/llama-1:free"
         # Verify second call was qwen/qwen-1:free (skipping meta-llama/llama-2:free)
         assert mock_create.call_args_list[1][1]["model"] == "qwen/qwen-1:free"
+
+
+def test_groq_task_specific_chains():
+    """Verify that GroqClient routes tasks to correct model chains."""
+    with patch("openai.resources.chat.completions.Completions.create") as mock_create, \
+         patch("app.llm_client.get_langfuse_client", return_value=None), \
+         patch("app.llm_client.config") as mock_config:
+
+        mock_config.GROQ_API_KEY = "dummy-key"
+        mock_config.GROQ_BASE_URL = "https://dummy.groq.api"
+        mock_config.GROQ_MODEL = ""
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = '{"answer": "model test", "score": 99}'
+        mock_response.usage = None
+        mock_create.return_value = mock_response
+
+        client = GroqClient()
+
+        res_general = run_async(client.run_json("general_chat", "hello", TestSchema))
+        assert isinstance(res_general, TestSchema)
+        assert mock_create.call_args_list[0][1]["model"] == "llama-3.1-8b-instant"
+
+        mock_create.reset_mock()
+        res_extract = run_async(client.run_json("extract_knowledge_graph", "text", TestSchema))
+        assert isinstance(res_extract, TestSchema)
+        assert mock_create.call_args_list[0][1]["model"] == "llama-3.1-8b-instant"
+
+        mock_create.reset_mock()
+        res_visual = run_async(client.run_json("generate_visual_spec", "plot", TestSchema))
+        assert isinstance(res_visual, TestSchema)
+        assert mock_create.call_args_list[0][1]["model"] == "qwen/qwen3-32b"
+
+        mock_create.reset_mock()
+        res_eval = run_async(client.run_json("evaluate_mastery_response", "answer", TestSchema))
+        assert isinstance(res_eval, TestSchema)
+        assert mock_create.call_args_list[0][1]["model"] == "llama-3.1-8b-instant"
 
 
 def test_router_codex_gating_behavior_batch_denied():
