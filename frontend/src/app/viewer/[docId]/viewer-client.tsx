@@ -110,7 +110,7 @@ export default function ViewerClient({ docId }: { docId: string }) {
     return () => window.removeEventListener(SETTINGS_EVENT, onChange);
   }, []);
 
-  // Right-pane mode (Visualizer / KG / Chat / Flashcards / Feynman) —
+  // Right-pane mode (Visualizer / KG / Chat / Quizzes) —
   // tab-scoped, sessionStorage backed so a reload restores it.
   const [rightPaneMode, setRightPaneMode] = useState<RightPaneMode>(() => {
     if (typeof window === "undefined") return "visualizer";
@@ -119,8 +119,7 @@ export default function ViewerClient({ docId }: { docId: string }) {
       v === "visualizer" ||
       v === "graph" ||
       v === "chat" ||
-      v === "flashcards" ||
-      v === "feynman"
+      v === "quizzes"
     ) {
       return v;
     }

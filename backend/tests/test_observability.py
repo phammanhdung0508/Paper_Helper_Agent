@@ -134,13 +134,11 @@ def test_chat_trace_callback_generation():
             )
             res = run_agent_chat(req)
             
-            # Verify CallbackHandler was initialized with trace info
+            # Verify CallbackHandler was initialized with the stateful trace.
             mock_callback_handler.assert_called_once()
             kwargs = mock_callback_handler.call_args[1]
-            assert kwargs["trace_id"] == res.trace_id
-            assert kwargs["session_id"] == "session-456"
-            assert kwargs["public_key"] == "pk-mock"
-            assert kwargs["secret_key"] == "sk-mock"
+            assert kwargs["stateful_client"] == mock_lf.trace.return_value
+            assert kwargs["update_stateful_client"] is True
             
             # Verify Langfuse was initialized and trace metadata was updated with route_taken
             mock_langfuse_class.assert_called_once_with(
@@ -148,7 +146,13 @@ def test_chat_trace_callback_generation():
                 secret_key="sk-mock",
                 host="http://localhost:3000"
             )
-            mock_lf.trace.assert_called_once_with(id=res.trace_id)
+            mock_lf.trace.assert_any_call(
+                id=res.trace_id,
+                session_id="session-456",
+                user_id="default_student_501",
+                tags=["v1-router-gpt-4o-mini"],
+            )
+            mock_lf.trace.assert_any_call(id=res.trace_id)
             mock_lf.trace(id=res.trace_id).update.assert_called_once_with(
                 metadata={
                     "session_id": "session-456",
@@ -347,4 +351,3 @@ def test_langgraph_compilation_and_execution_config(mock_config, mock_client_cls
         assert mock_cb in cb1.handlers
     else:
         assert cb1 == [mock_cb]
-

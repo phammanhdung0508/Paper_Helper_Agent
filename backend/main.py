@@ -443,6 +443,8 @@ def log_chat_feedback(payload: FeedbackRequest):
 
 @app.post("/api/evaluation/question", response_model=QuizResponse)
 def generate_quiz(payload: QuizRequest):
+    raise HTTPException(status_code=410, detail="Mastery evaluation is disabled")
+
     conn = database.get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT label, explanation FROM concepts WHERE id = ?", (payload.concept_id,))
@@ -463,6 +465,8 @@ def generate_quiz(payload: QuizRequest):
 
 @app.post("/api/evaluation/submit", response_model=QuizSubmitResponse)
 def submit_answer(payload: QuizSubmitRequest):
+    raise HTTPException(status_code=410, detail="Mastery evaluation is disabled")
+
     conn = database.get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM concepts WHERE id = ?", (payload.concept_id,))

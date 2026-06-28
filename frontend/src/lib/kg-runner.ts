@@ -307,6 +307,7 @@ function clampMonotone(prev: KGEvaluation, next: KGEvaluation): KGEvaluation {
 const evalInFlight = new Map<string, Promise<void>>();
 const evalPending = new Map<string, boolean>();
 const evalDeferredTimers = new Map<string, NodeJS.Timeout>();
+const ENABLE_MASTERY_EVALUATION = false;
 
 /** Whether an evaluation pass is currently running for this doc. Used by
  *  the state route so the client can render a live "evaluating" indicator
@@ -321,6 +322,7 @@ export function isEvaluating(docId: string): boolean {
  * of redundant codex turns.
  */
 export function scheduleEvaluation(docId: string): void {
+  if (!ENABLE_MASTERY_EVALUATION) return;
   if (evalInFlight.has(docId)) {
     evalPending.set(docId, true);
     return;

@@ -9,9 +9,7 @@
  *   - Visualizer       (the original concept-renderer; per-tag click)
  *   - Knowledge Graph  (concept map + evaluation scores)
  *   - Chat             (multi-turn, multi-thread Q&A)
- *   - Flashcards       (active recall decks with self-grading)
  *   - Quizzes          (forced-choice multiple-choice quizzes)
- *   - Feynman          (plain-language explanation questions, 4 turns)
  *
  * The Visualizer view is essentially the original component, lifted into
  * here so the chrome (mode chip + title) lives in one place.
@@ -22,10 +20,8 @@ import Link from "next/link";
 import {
   Sigma,
   MessageSquare,
-  Layers,
   ListChecks,
   Network,
-  Lightbulb,
   ChevronDown,
   MoreHorizontal,
   Download,
@@ -49,9 +45,7 @@ import {
 
 import KnowledgeGraphView from "./KnowledgeGraphView";
 import ChatView from "./ChatView";
-import FlashcardsView from "./FlashcardsView";
 import QuizzesView from "./QuizzesView";
-import FeynmanView from "./FeynmanView";
 
 export type RightPaneMode =
   | "visualizer"
@@ -86,22 +80,10 @@ const MODES: Array<{
     description: "Multi-turn Q&A about the document",
   },
   {
-    id: "flashcards",
-    label: "Flashcards",
-    Icon: Layers,
-    description: "Active-recall decks with self-grading",
-  },
-  {
     id: "quizzes",
     label: "Quizzes",
     Icon: ListChecks,
     description: "Forced-choice multiple-choice quizzes with explanations",
-  },
-  {
-    id: "feynman",
-    label: "Feynman",
-    Icon: Lightbulb,
-    description: "Clarify a topic through guided plain-language questions",
   },
 ];
 
@@ -159,9 +141,7 @@ export default function RightPane({ docId, mode, onModeChange, visualizer }: Pro
           />
         )}
         {mode === "chat" && <ChatView docId={docId} />}
-        {mode === "flashcards" && <FlashcardsView docId={docId} />}
         {mode === "quizzes" && <QuizzesView docId={docId} />}
-        {mode === "feynman" && <FeynmanView docId={docId} />}
       </div>
 
       {mode === "visualizer" && visualizer.spec && (

@@ -1283,24 +1283,10 @@ function NodeOverlay({
           </button>
           <button
             type="button"
-            onClick={() => onJumpToTool?.("flashcards", node.label)}
-            className="rounded-md border border-[var(--border-subtle)] bg-white px-2 py-1.5 text-[11.5px] font-medium text-[var(--ink-700)] hover:bg-[var(--surface-sunken)] hover:text-[var(--ink-900)]"
-          >
-            Flashcards
-          </button>
-          <button
-            type="button"
             onClick={() => onJumpToTool?.("quizzes", node.label)}
             className="rounded-md border border-[var(--border-subtle)] bg-white px-2 py-1.5 text-[11.5px] font-medium text-[var(--ink-700)] hover:bg-[var(--surface-sunken)] hover:text-[var(--ink-900)]"
           >
             Quizzes
-          </button>
-          <button
-            type="button"
-            onClick={() => onJumpToTool?.("feynman", node.label)}
-            className="rounded-md border border-[var(--border-subtle)] bg-white px-2 py-1.5 text-[11.5px] font-medium text-[var(--ink-700)] hover:bg-[var(--surface-sunken)] hover:text-[var(--ink-900)]"
-          >
-            Feynman
           </button>
         </footer>
       </motion.div>

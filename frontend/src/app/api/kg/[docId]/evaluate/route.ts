@@ -7,7 +7,6 @@
  */
 
 import { NextResponse } from "next/server";
-import { scheduleEvaluation } from "@/lib/kg-runner";
 import { getDoc } from "@/lib/store";
 
 export const runtime = "nodejs";
@@ -20,6 +19,5 @@ export async function POST(
   if (!getDoc(docId)) {
     return NextResponse.json({ error: "doc not found" }, { status: 404 });
   }
-  scheduleEvaluation(docId);
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ error: "Mastery evaluation is disabled" }, { status: 410 });
 }
