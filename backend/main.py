@@ -351,15 +351,27 @@ def run_agent_chat(payload: ChatRequest):
     if config.LANGFUSE_PUBLIC_KEY and config.LANGFUSE_SECRET_KEY:
         try:
             from langfuse.callback import CallbackHandler
-            cb = CallbackHandler(
-                public_key=config.LANGFUSE_PUBLIC_KEY,
-                secret_key=config.LANGFUSE_SECRET_KEY,
-                host=config.LANGFUSE_HOST,
-                trace_id=trace_id,
-                session_id=session_id,
-                user_id="default_student_501",
-                tags=["v1-router-gpt-4o-mini"]
-            )
+            lf_client = get_langfuse_client()
+            if lf_client:
+                stateful_trace = lf_client.trace(
+                    id=trace_id,
+                    session_id=session_id,
+                    user_id="default_student_501",
+                    tags=["v1-router-gpt-4o-mini"],
+                )
+                cb = CallbackHandler(
+                    stateful_client=stateful_trace,
+                    update_stateful_client=True,
+                )
+            else:
+                cb = CallbackHandler(
+                    public_key=config.LANGFUSE_PUBLIC_KEY,
+                    secret_key=config.LANGFUSE_SECRET_KEY,
+                    host=config.LANGFUSE_HOST,
+                    session_id=session_id,
+                    user_id="default_student_501",
+                    tags=["v1-router-gpt-4o-mini"]
+                )
             callbacks.append(cb)
         except Exception as e:
             print(f"Error loading Langfuse Callback: {e}")

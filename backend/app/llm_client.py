@@ -307,13 +307,23 @@ class OpenAIDirectClient(BaseLLMClient):
         if not local_callbacks and config.LANGFUSE_PUBLIC_KEY and config.LANGFUSE_SECRET_KEY:
             try:
                 from langfuse.callback import CallbackHandler
-                cb = CallbackHandler(
-                    public_key=config.LANGFUSE_PUBLIC_KEY,
-                    secret_key=config.LANGFUSE_SECRET_KEY,
-                    host=config.LANGFUSE_HOST,
-                    trace_id=trace_id or str(uuid.uuid4()),
-                    tags=["manual-direct"]
-                )
+                lf = get_langfuse_client()
+                if lf:
+                    stateful_trace = lf.trace(
+                        id=trace_id or str(uuid.uuid4()),
+                        tags=["manual-direct"],
+                    )
+                    cb = CallbackHandler(
+                        stateful_client=stateful_trace,
+                        update_stateful_client=True,
+                    )
+                else:
+                    cb = CallbackHandler(
+                        public_key=config.LANGFUSE_PUBLIC_KEY,
+                        secret_key=config.LANGFUSE_SECRET_KEY,
+                        host=config.LANGFUSE_HOST,
+                        tags=["manual-direct"]
+                    )
                 local_callbacks = [cb]
             except Exception as e:
                 print(f"Error initializing fallback Langfuse Callback: {e}")
