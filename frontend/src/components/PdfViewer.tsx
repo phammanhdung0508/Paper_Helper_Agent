@@ -9,6 +9,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
+import TooltipChip from "@/components/TooltipChip";
 import type { VizType } from "@/lib/schemas";
 import { VIZ_TYPE_META, vizTypeStyle } from "@/components/Visualizer/viz-meta";
 import { getDocument, GlobalWorkerOptions, renderTextLayer } from "pdfjs-dist/legacy/build/pdf.js";
@@ -310,16 +311,17 @@ export default function PdfViewer({
 
       {/* Page navigation — discreet cluster centered at the bottom */}
       <div className="pointer-events-none absolute bottom-3 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-white/95 p-1 shadow-[0_2px_8px_rgba(17,17,19,0.06)] backdrop-blur">
-        <button
-          type="button"
-          onClick={() => goToPage(currentPage - 1)}
-          disabled={currentPage <= 0}
-          className="pointer-events-auto inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--ink-700)] transition hover:bg-[var(--surface-sunken)] hover:text-[var(--ink-900)] disabled:opacity-40 disabled:hover:bg-transparent"
-          aria-label="Previous page"
-          title="Previous page"
-        >
-          <ChevronLeft className="h-3.5 w-3.5" />
-        </button>
+        <TooltipChip tip="Previous page">
+          <button
+            type="button"
+            onClick={() => goToPage(currentPage - 1)}
+            disabled={currentPage <= 0}
+            className="pointer-events-auto inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--ink-700)] transition hover:bg-[var(--surface-sunken)] hover:text-[var(--ink-900)] disabled:opacity-40 disabled:hover:bg-transparent"
+            aria-label="Previous page"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </button>
+        </TooltipChip>
         {pageEditing ? (
           <div className="pointer-events-auto flex items-center px-1">
             <input
@@ -346,26 +348,28 @@ export default function PdfViewer({
             </span>
           </div>
         ) : (
+          <TooltipChip tip="Click to jump to a specific page">
+            <button
+              type="button"
+              onClick={startPageEdit}
+              className="pointer-events-auto rounded-md px-2 py-0.5 text-[12px] font-medium tabular-nums text-[var(--ink-700)] transition hover:bg-[var(--surface-sunken)] hover:text-[var(--ink-900)]"
+              aria-label="Jump to page"
+            >
+              {Math.min(currentPage + 1, numPages || 1)} / {numPages || 1}
+            </button>
+          </TooltipChip>
+        )}
+        <TooltipChip tip="Next page">
           <button
             type="button"
-            onClick={startPageEdit}
-            className="pointer-events-auto rounded-md px-2 py-0.5 text-[12px] font-medium tabular-nums text-[var(--ink-700)] transition hover:bg-[var(--surface-sunken)] hover:text-[var(--ink-900)]"
-            aria-label="Jump to page"
-            title="Click to jump to a specific page"
+            onClick={() => goToPage(currentPage + 1)}
+            disabled={currentPage >= numPages - 1}
+            className="pointer-events-auto inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--ink-700)] transition hover:bg-[var(--surface-sunken)] hover:text-[var(--ink-900)] disabled:opacity-40 disabled:hover:bg-transparent"
+            aria-label="Next page"
           >
-            {Math.min(currentPage + 1, numPages || 1)} / {numPages || 1}
+            <ChevronRight className="h-3.5 w-3.5" />
           </button>
-        )}
-        <button
-          type="button"
-          onClick={() => goToPage(currentPage + 1)}
-          disabled={currentPage >= numPages - 1}
-          className="pointer-events-auto inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--ink-700)] transition hover:bg-[var(--surface-sunken)] hover:text-[var(--ink-900)] disabled:opacity-40 disabled:hover:bg-transparent"
-          aria-label="Next page"
-          title="Next page"
-        >
-          <ChevronRight className="h-3.5 w-3.5" />
-        </button>
+        </TooltipChip>
       </div>
 
       {/* Zoom cluster — bottom-right of the document panel */}
@@ -394,36 +398,39 @@ export default function PdfViewer({
             <span className="text-[12px] font-medium text-[var(--ink-700)]">%</span>
           </div>
         ) : (
+          <TooltipChip tip="Click to type a custom zoom">
+            <button
+              type="button"
+              onClick={startZoomEdit}
+              className="pointer-events-auto rounded-md px-2 py-0.5 text-[12px] font-medium tabular-nums text-[var(--ink-700)] transition hover:bg-[var(--surface-sunken)] hover:text-[var(--ink-900)]"
+              aria-label="Set custom zoom"
+            >
+              {zoomPercent}%
+            </button>
+          </TooltipChip>
+        )}
+        <TooltipChip tip="Zoom in">
           <button
             type="button"
-            onClick={startZoomEdit}
-            className="pointer-events-auto rounded-md px-2 py-0.5 text-[12px] font-medium tabular-nums text-[var(--ink-700)] transition hover:bg-[var(--surface-sunken)] hover:text-[var(--ink-900)]"
-            aria-label="Set custom zoom"
-            title="Click to type a custom zoom"
+            onClick={zoomIn}
+            disabled={zoomLevel >= ZOOM_MAX}
+            className="pointer-events-auto inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--ink-700)] transition hover:bg-[var(--surface-sunken)] hover:text-[var(--ink-900)] disabled:opacity-40 disabled:hover:bg-transparent"
+            aria-label="Zoom in"
           >
-            {zoomPercent}%
+            <Plus className="h-3.5 w-3.5" />
           </button>
-        )}
-        <button
-          type="button"
-          onClick={zoomIn}
-          disabled={zoomLevel >= ZOOM_MAX}
-          className="pointer-events-auto inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--ink-700)] transition hover:bg-[var(--surface-sunken)] hover:text-[var(--ink-900)] disabled:opacity-40 disabled:hover:bg-transparent"
-          aria-label="Zoom in"
-          title="Zoom in"
-        >
-          <Plus className="h-3.5 w-3.5" />
-        </button>
-        <button
-          type="button"
-          onClick={zoomOut}
-          disabled={zoomLevel <= ZOOM_MIN}
-          className="pointer-events-auto inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--ink-700)] transition hover:bg-[var(--surface-sunken)] hover:text-[var(--ink-900)] disabled:opacity-40 disabled:hover:bg-transparent"
-          aria-label="Zoom out"
-          title="Zoom out"
-        >
-          <Minus className="h-3.5 w-3.5" />
-        </button>
+        </TooltipChip>
+        <TooltipChip tip="Zoom out">
+          <button
+            type="button"
+            onClick={zoomOut}
+            disabled={zoomLevel <= ZOOM_MIN}
+            className="pointer-events-auto inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--ink-700)] transition hover:bg-[var(--surface-sunken)] hover:text-[var(--ink-900)] disabled:opacity-40 disabled:hover:bg-transparent"
+            aria-label="Zoom out"
+          >
+            <Minus className="h-3.5 w-3.5" />
+          </button>
+        </TooltipChip>
       </div>
     </div>
   );
