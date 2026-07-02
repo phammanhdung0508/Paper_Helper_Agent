@@ -22,6 +22,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
+import TooltipChip from "./TooltipChip";
 
 type FeatureColor = "rose" | "amber" | "emerald" | "violet" | "sky";
 type FeatureIcon = LucideIcon;
@@ -183,17 +184,28 @@ export default function UploadCard() {
         onDragOver={(e) => e.preventDefault()}
         onDragLeave={() => setDragOver(false)}
         onDrop={(e) => {
+          if (busy) return;
           e.preventDefault();
           setDragOver(false);
           const f = e.dataTransfer.files?.[0];
           if (f) startUpload(f);
         }}
-        onClick={() => inputRef.current?.click()}
+        onClick={() => !busy && inputRef.current?.click()}
+        onKeyDown={(e) => {
+          if (busy) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            inputRef.current?.click();
+          }
+        }}
         role="button"
-        tabIndex={0}
+        tabIndex={busy ? -1 : 0}
+        aria-label="Upload PDF"
+        aria-disabled={busy != null}
         className={[
-          "mt-9 flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-8 py-9 text-center transition-colors",
-          dragOver
+          "mt-9 flex flex-col items-center justify-center rounded-2xl border-2 border-dashed px-8 py-9 text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-500)]",
+          busy ? "cursor-wait opacity-60" : "cursor-pointer",
+          dragOver && !busy
             ? "border-[var(--accent-500)] bg-[var(--accent-50)]"
             : "border-[var(--accent-100)] bg-[var(--accent-50)]/40 hover:border-[var(--accent-500)] hover:bg-[var(--accent-50)]",
         ].join(" ")}
@@ -211,18 +223,18 @@ export default function UploadCard() {
         {/* Output-type badges — what we'll generate from the PDF */}
         <div className="mb-4 flex items-center justify-center gap-2">
           {FEATURES.map(({ color, icon: Icon, title }) => (
-            <span
-              key={color}
-              title={title}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border"
-              style={{
-                background: `var(--tag-${color}-bg)`,
-                color: `var(--tag-${color}-fg)`,
-                borderColor: `var(--tag-${color}-ring)`,
-              }}
-            >
-              <Icon className="h-4 w-4" />
-            </span>
+            <TooltipChip key={color} tip={title}>
+              <span
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border"
+                style={{
+                  background: `var(--tag-${color}-bg)`,
+                  color: `var(--tag-${color}-fg)`,
+                  borderColor: `var(--tag-${color}-ring)`,
+                }}
+              >
+                <Icon className="h-4 w-4" />
+              </span>
+            </TooltipChip>
           ))}
         </div>
         <p className="flex flex-wrap items-center justify-center gap-2 text-[14px] text-[var(--ink-700)]">
@@ -350,15 +362,16 @@ export default function UploadCard() {
                 disabled={busy != null}
                 className="group flex items-start gap-4 rounded-xl border border-[var(--border-subtle)] bg-white p-4 text-left transition hover:border-[var(--border-strong)] disabled:opacity-50"
               >
-                <div
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-sunken)]"
-                  style={{
-                    color: `var(--tag-${sampleIcon.tone}-fg)`,
-                  }}
-                  title={sampleIcon.label}
-                >
-                  <SampleIcon className="h-5 w-5" aria-hidden />
-                </div>
+                <TooltipChip tip={sampleIcon.label}>
+                  <div
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-sunken)]"
+                    style={{
+                      color: `var(--tag-${sampleIcon.tone}-fg)`,
+                    }}
+                  >
+                    <SampleIcon className="h-5 w-5" aria-hidden />
+                  </div>
+                </TooltipChip>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[14px] font-semibold text-[var(--ink-900)]">{s.title}</p>
                   <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-relaxed text-[var(--ink-500)]">
